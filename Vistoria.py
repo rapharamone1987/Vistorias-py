@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 st.title("🏠 Auxiliar de Contestação de Vistoria Imobiliária")
-st.write("Compare o laudo oficial com fotos do imóvel usando o **Llama 3.2 90B Vision**.")
+st.write("Compare o laudo oficial com fotos do imóvel para gerar uma contestação fundamentada.")
 
 # ---------------------------------------------------------
 # AUTENTICAÇÃO / OBTENÇÃO DA GROQ API KEY
@@ -141,39 +141,26 @@ if st.session_state['fotos_camera']:
     imagens_totais.extend(st.session_state['fotos_camera'])
 
 # ---------------------------------------------------------
-# PROCESSAMENTO COM LLAMA-3.2-90B-VISION-PREVIEW
+# PROCESSAMENTO DE ANÁLISE (EVIDÊNCIAS + SÍNTESE)
 # ---------------------------------------------------------
 st.divider()
 
-if st.button("🔍 Analisar e Comparar Vistoria (Llama 90B)", type="primary", use_container_width=True):
+if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_width=True):
     if not texto_laudo_final:
         st.error("Por favor, envie o arquivo do laudo ou cole o texto da vistoria.")
     elif not imagens_totais:
         st.error("Por favor, envie ou tire ao menos uma foto como evidência.")
     else:
-        with st.spinner("Analisando evidências visuais e laudo via Llama 3.2 90B Vision..."):
+        with st.spinner("Analisando fotos com modelo de visão e gerando laudo com Llama 3.3 70B..."):
             try:
-                prompt_text = f"""
-                Você é um perito em vistorias imobiliárias e direito do inquilino.
-                Compare o laudo fornecido com as evidências visuais capturadas nas fotos.
-
-                --- LAUDO DA IMOBILIÁRIA ---
-                {texto_laudo_final}
-
-                --- INSTRUÇÕES DE ANÁLISE ---
-                1. Avalie detalhadamente o estado das superfícies, pintura, manchas ou avarias visíveis nas imagens.
-                2. Aponta discordâncias técnicas em relação ao laudo da imobiliária.
-                3. Escreva uma contestação formal e bem fundamentada separada por cômodo.
-                """
-
+                # ETAPA 1: Processamento de Visão Computacional com Contingência
                 content_payload = [
                     {
                         "type": "text",
-                        "text": prompt_text
+                        "text": "Analise as imagens e descreva com precisão técnica todas as avarias, sujeiras, furos, riscos, manchas de umidade ou defeitos visíveis:"
                     }
                 ]
 
-                # Adiciona até 2 fotos otimizadas para respeitar o limite de tokens
                 for img in imagens_totais[:2]:
                     base64_str = encode_image_to_base64(img)
                     content_payload.append({
@@ -183,21 +170,51 @@ if st.button("🔍 Analisar e Comparar Vistoria (Llama 90B)", type="primary", us
                         }
                     })
 
-                completion = client.chat.completions.create(
-                    model="llama-3.2-90b-vision-preview",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": content_payload
-                        }
-                    ],
+                try:
+                    # Tentativa 1 com Qwen 27B
+                    vision_resp = client.chat.completions.create(
+                        model="qwen/qwen3.6-27b",
+                        messages=[{"role": "user", "content": content_payload}],
+                        temperature=0.1,
+                        max_tokens=500
+                    )
+                except Exception:
+                    # Fallback para Llama 3.2 11B Vision
+                    vision_resp = client.chat.completions.create(
+                        model="llama-3.2-11b-vision-instruct",
+                        messages=[{"role": "user", "content": content_payload}],
+                        temperature=0.1,
+                        max_tokens=500
+                    )
+                
+                descricao_visual = vision_resp.choices[0].message.content
+
+                # ETAPA 2: Redação da Contestação Técnica (Llama 3.3 70B Versatile)
+                prompt_contestacao = f"""
+                Você é um perito em vistorias imobiliárias e direito do inquilino.
+                Elabore uma contestação formal e bem fundamentada comparando o laudo da imobiliária com as evidências reais das fotos.
+
+                --- LAUDO DA IMOBILIÁRIA ---
+                {texto_laudo_final}
+
+                --- DETALHES IDENTIFICADOS NAS FOTOS REALIZADAS ---
+                {descricao_visual}
+
+                Instruções:
+                1. Aponta as discordâncias técnicas em relação ao laudo fornecido pela imobiliária.
+                2. Redija argumentos formais e respeitosos divididos por cômodo/item divergente.
+                """
+
+                final_resp = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt_contestacao}],
                     temperature=0.2,
                     max_tokens=1500
                 )
 
-                resultado_texto = completion.choices[0].message.content
+                resultado_texto = final_resp.choices[0].message.content
 
-                st.success("Análise concluída com sucesso!")
+                st.success("Análise e parecer concluídos com sucesso!")
                 st.subheader("📌 Resultado da Avaliação e Contestação")
                 st.markdown(resultado_texto)
                 
