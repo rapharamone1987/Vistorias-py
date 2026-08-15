@@ -154,7 +154,7 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
     elif not imagens_totais:
         st.error("Por favor, envie ou tire ao menos uma foto como evidência.")
     else:
-        with st.spinner("Analisando imagens e comparando com o laudo via Groq..."):
+        with st.spinner("Analisando imagens e comparando com o laudo via Groq (Llama 3.2 90B Vision)..."):
             try:
                 # Prompt de instrução técnica
                 prompt_text = f"""
@@ -191,9 +191,9 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                         }
                     })
 
-                # Chamada para o modelo visual da Groq
+                # Chamada para o modelo visual avançado de 90B da Groq
                 completion = client.chat.completions.create(
-                    model="llama-3.2-11b-vision-instruct",
+                    model="llama-3.2-90b-vision-preview",
                     messages=[
                         {
                             "role": "user",
@@ -230,4 +230,3 @@ if 'resultado_analise' in st.session_state:
         file_name="contestacao_vistoria_imobiliaria.pdf",
         mime="application/pdf"
     )
-    
