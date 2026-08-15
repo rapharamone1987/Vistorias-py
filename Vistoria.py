@@ -73,8 +73,9 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
         f"Analise o laudo referente a uma VISTORIA DE {tipo_vistoria.upper()}.\n"
         "REGRAS ESTRITAS DE EXTRAÇÃO:\n"
         "1. PROIBIDO criar itens genéricos como 'Sala: Não há informações' ou 'Cozinha: Boas condições'.\n"
-        "2. Extraia APENAS elementos físicos concretos descritos no laudo (ex: Pintura, Pisos, Janelas, Portas, Metais, Louças, Fechaduras, Tomadas).\n"
-        "3. Associe cada elemento ao seu cômodo com o estado relatado.\n"
+        "2. Se um cômodo não tiver elementos específicos detalhados, NÃO inclua esse cômodo.\n"
+        "3. Extraia APENAS elementos físicos concretos descritos no laudo (Pintura, Pisos, Aberturas, Metais, Louças, Fechaduras, Elétrica).\n"
+        "4. Aponte cada item obrigatoriamente no formato 'Cômodo - Elemento: Estado detalhado'.\n"
         "Responda EXCLUSIVAMENTE em JSON válido neste formato:\n"
         '{\n'
         '  "imobiliaria": "nome da imobiliária",\n'
@@ -93,23 +94,21 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
             res = client.chat.completions.create(
                 model="llama-3.3-70b-versatile", 
                 messages=[{"role": "user", "content": prompt + "\n\nTexto do Laudo:\n" + texto_entrada[:4000]}], 
-                temperature=0.1,
+                temperature=0.0,
                 max_tokens=1500
             )
             data = limpar_json_ia(res.choices[0].message.content)
             if data and "checklist" in data:
+                padroes_genericos = r'(não há informação|sem informação|não informado|boas condições gerais|sem observações|conforme laudo|conforme vistoria)'
                 data["checklist"] = [
                     item for item in data["checklist"] 
-                    if not re.search(r'(não há informação|sem informação|não informado|boas condições gerais)', item, re.IGNORECASE)
+                    if not re.search(padroes_genericos, item, re.IGNORECASE) and " - " in item
                 ]
             return data
         except Exception as e:
             st.warning(f"Aviso na extração por IA: {e}")
     return None
 
-def gerar_parecer_revisao_ia(texto_bruto, tipo_vistoria):
-    if not client or not texto_bruto:
-        return ""
     
     contexto_foco = (
         "registrar vícios ocultos e o estado inicial real recebido (Art. 22, I e IV da Lei 8.245/91) para afastar cobranças futuras indevidas."
