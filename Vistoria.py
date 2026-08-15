@@ -12,7 +12,7 @@ import base64
 import re
 from PIL import Image
 
-# ReportLab para layout e formatação profissional de PDF
+# ReportLab para layout executivo do PDF
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -28,19 +28,21 @@ if "cabecalho_vistoria" not in st.session_state:
         "locatario": "", 
         "endereco": "", 
         "contrato": "", 
+        "tipo_vistoria": "Entrada",
         "data_vistoria": datetime.now().strftime("%d/%m/%Y")
     }
 if "registros_fotos" not in st.session_state: st.session_state.registros_fotos = {}
-if "contestados_status" not in st.session_state: st.session_state.contestados_status = {}
+if "divergentes_status" not in st.session_state: st.session_state.divergentes_status = {}
 if "camera_ativa" not in st.session_state: st.session_state.camera_ativa = None
 if "texto_vistoria_bruto" not in st.session_state: st.session_state.texto_vistoria_bruto = ""
+if "parecer_editavel" not in st.session_state: st.session_state.parecer_editavel = ""
 
 # CONFIGURAÇÃO DA GROQ API KEY
 key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
 client = Groq(api_key=key) if key else None
 
 # ==========================================
-# 2. FUNÇÕES AUXILIARES DE IA E TRATAMENTO
+# 2. FUNÇÕES AUXILIARES DE IA E LEGISLAÇÃO
 # ==========================================
 def limpar_json_ia(texto):
     try:
@@ -52,49 +54,73 @@ def limpar_json_ia(texto):
 def encode_image_to_base64(raw_bytes):
     return base64.b64encode(raw_bytes).decode('utf-8')
 
-def extrair_itens_vistoria_ia(texto_entrada):
-    """Lê o laudo da imobiliária e fragmenta em itens individuais de checklist por cômodo/elemento."""
+def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
     prompt = (
-        "Você é um Perito em Vistorias Imobiliárias. "
-        "Analise o texto do laudo de vistoria e extraia os apontamentos divididos por cômodos/elementos. "
-        "Ignore cláusulas padrão de contrato. Responda APENAS em formato JSON válido:\n"
+        f"Você é um Perito Especialista em Vistorias Imobiliárias e Direito Locatício (Lei 8.245/91).\n"
+        f"Analise o laudo referente a uma VISTORIA DE {tipo_vistoria.upper()}.\n"
+        "Extraia uma lista de verificação DETALHADA por elemento de cada cômodo.\n"
+        "Especifique detalhes sobre: Pintura, Pisos/Rodapés, Portas/Aberturas, Instalações Elétricas/Hidráulicas e Louças/Metais.\n"
+        "Ignore cláusulas jurídicas padrão. Responda APENAS em JSON válido:\n"
         '{\n'
-        '  "imobiliaria": "nome da imobiliária ou vazio",\n'
-        '  "locatario": "nome do inquilino ou vazio",\n'
-        '  "endereco": "endereço do imóvel ou vazio",\n'
+        '  "imobiliaria": "nome da imobiliária",\n'
+        '  "locatario": "nome do inquilino",\n'
+        '  "endereco": "endereço completo do imóvel",\n'
         '  "checklist": [\n'
-        '     "Sala: Paredes com pintura nova em tinta látex branca sem manchas",\n'
-        '     "Cozinha: Torneira da pia com leve vazamento na base",\n'
-        '     "Quarto 1: Piso laminado com risco de 10cm próximo à janela"\n'
+        '     "Sala - Pintura: Parede principal com manchas de umidade junto ao rodapé",\n'
+        '     "Sala - Aberturas: Janela de alumínio com fecho emperrado",\n'
+        '     "Cozinha - Metais: Torneira da pia com vazamento no vedante"\n'
         '  ]\n'
         '}'
     )
     if client:
         res = client.chat.completions.create(
             model="llama-3.3-70b-versatile", 
-            messages=[{"role": "user", "content": prompt + "\n\nTexto do laudo:\n" + texto_entrada[:4000]}], 
-            temperature=0.1
+            messages=[{"role": "user", "content": prompt + "\n\nTexto do Laudo:\n" + texto_entrada[:5000]}], 
+            temperature=0.1,
+            max_tokens=2048
         )
         return limpar_json_ia(res.choices[0].message.content)
     return None
 
-def analisar_foto_item_ia(raw_bytes, descricao_item):
-    """Envia a foto do item para a IA de visão descrever tecnicamente as avarias observadas."""
-    if not client:
+def gerar_parecer_revisao_ia(texto_bruto, tipo_vistoria):
+    """Gera parecer com fundamentação jurídica na Lei do Inquilino (Lei 8.245/91)."""
+    if not client or not texto_bruto:
         return ""
     
+    contexto_foco = (
+        "registrar vícios ocultos e o estado inicial real recebido (Art. 22, I e IV da Lei 8.245/91) para afastar cobranças futuras indevidas."
+        if tipo_vistoria == "Entrada" else
+        "ressalvar as deteriorações decorrentes do uso normal e desgaste natural do tempo (Art. 23, III da Lei 8.245/91), rechaçando imposições abusivas ou reformas estruturais."
+    )
+    
+    prompt = (
+        f"Elabore um termo/parecer técnico de REVISÃO DE VISTORIA DE {tipo_vistoria.upper()} com fundamentação na Lei do Inquilino (Lei nº 8.245/1991).\n"
+        f"Objetivo principal: {contexto_foco}\n"
+        "Cite expressamente os artigos cabíveis quando for o caso (Art. 22 e Art. 23) de forma respeitosa, formal e juridicamente precisa.\n"
+        "REGRA: Máximo 14 linhas e encerre OBRIGATORIAMENTE com frase completa."
+    )
+    res = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt + "\n\nLaudo da Imobiliária:\n" + texto_bruto[:3000]}],
+        temperature=0.2,
+        max_tokens=900
+    )
+    return res.choices[0].message.content
+
+def analisar_foto_item_ia(raw_bytes, descricao_item):
+    if not client:
+        return ""
     base64_str = encode_image_to_base64(raw_bytes)
     content_payload = [
         {
             "type": "text",
-            "text": f"Você é um perito em vistorias imobiliárias. Analise esta imagem anexada ao item '{descricao_item}'. Descreva resumidamente em 2 frases técnicas as avarias, sujeiras, furos, trincas ou desgastes visíveis na imagem que contestam a vistoria inicial."
+            "text": f"Analise esta imagem associada ao item '{descricao_item}'. Descreva tecnicamente em 2 frases se a avaria se trata de vício do imóvel, desgaste natural ou dano localizado."
         },
         {
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"}
         }
     ]
-    
     try:
         res = client.chat.completions.create(
             model="qwen/qwen3.6-27b",
@@ -133,9 +159,9 @@ def purificar_texto_para_pdf(texto_bruto):
     return "\n".join(linhas_processadas)
 
 # ==========================================
-# 3. GERADOR DE PDF DE CONTESTAÇÃO (REPORTLAB)
+# 3. GERADOR DE PDF (REPORTLAB)
 # ==========================================
-def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict, analises_fotos_dict, obs_geral, parecer_ia=""):
+def gerar_pdf_revisao(cabecalho, itens_lista, status_divergentes, fotos_dict, analises_fotos_dict, obs_geral, parecer_texto):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=letter,
@@ -150,9 +176,11 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
     CINZA_TEXTO = colors.HexColor("#0f172a")
     CINZA_LINHA = colors.HexColor("#cbd5e1")
     
+    tipo_v = cabecalho.get("tipo_vistoria", "Entrada").upper()
+    
     style_titulo = ParagraphStyle(
         'DocTitle', parent=styles['Heading1'],
-        fontSize=13, leading=16, textColor=colors.HexColor("#ffffff"),
+        fontSize=12, leading=15, textColor=colors.HexColor("#ffffff"),
         fontName="Helvetica-Bold", alignment=1
     )
     style_secao = ParagraphStyle(
@@ -180,8 +208,9 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
 
     story = []
 
-    # Banner Superior
-    t_banner = Table([[Paragraph("<b>LAUDO TÉCNICO DE CONTESTAÇÃO DE VISTORIA IMOBILIÁRIA</b>", style_titulo)]], colWidths=[540])
+    # Banner
+    titulo_banner = f"<b>LAUDO TÉCNICO DE REVISÃO DE VISTORIA — LEI 8.245/1991</b>"
+    t_banner = Table([[Paragraph(titulo_banner, style_titulo)]], colWidths=[540])
     t_banner.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), AZUL_HEADER),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -191,13 +220,13 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
     story.append(t_banner)
     story.append(Spacer(1, 10))
 
-    # Tabela de Identificação
+    # Identificação
     dados_id = [
         [Paragraph("<b>Locatário / Inquilino:</b>", style_cell_header), Paragraph(cabecalho.get('locatario', '-'), style_cell_body)],
         [Paragraph("<b>Imobiliária / Vistoriador:</b>", style_cell_header), Paragraph(cabecalho.get('imobiliaria', '-'), style_cell_body)],
         [Paragraph("<b>Endereço do Imóvel:</b>", style_cell_header), Paragraph(cabecalho.get('endereco', '-'), style_cell_body)],
-        [Paragraph("<b>Contrato / Cód. Vistoria:</b>", style_cell_header), Paragraph(cabecalho.get('contrato', '-'), style_cell_body)],
-        [Paragraph("<b>Data da Contestação:</b>", style_cell_header), Paragraph(cabecalho.get('data_vistoria', '-'), style_cell_body)]
+        [Paragraph("<b>Modalidade / Contrato:</b>", style_cell_header), Paragraph(f"Vistoria de {cabecalho.get('tipo_vistoria', 'Entrada')} | Cód: {cabecalho.get('contrato', '-')}", style_cell_body)],
+        [Paragraph("<b>Data da Revisão:</b>", style_cell_header), Paragraph(cabecalho.get('data_vistoria', '-'), style_cell_body)]
     ]
     t_id = Table(dados_id, colWidths=[150, 390])
     t_id.setStyle(TableStyle([
@@ -209,28 +238,28 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
     story.append(t_id)
     story.append(Spacer(1, 10))
 
-    # Parecer Geral da IA
-    if parecer_ia:
-        story.append(Paragraph("<b>1. PARECER TÉCNICO CONSOLIDADO</b>", style_secao))
+    # Parecer Consolidado Fundamentado
+    if parecer_texto:
+        story.append(Paragraph("<b>1. PARECER TÉCNICO DE FUNDAMENTAÇÃO LEGAL (LEI Nº 8.245/1991)</b>", style_secao))
         story.append(HRFlowable(width="100%", thickness=1, color=AZUL_HEADER, spaceAfter=6))
         
-        texto_purificado = purificar_texto_para_pdf(parecer_ia)
+        texto_purificado = purificar_texto_para_pdf(parecer_texto)
         for l in texto_purificado.split('\n'):
             if l.strip():
                 story.append(Paragraph(l, style_cell_body))
                 story.append(Spacer(1, 3))
         story.append(Spacer(1, 8))
 
-    # Tabela de Itens Vistoriados e Contestações
-    story.append(Paragraph("<b>2. CHECKLIST DE DIVERGÊNCIAS E ANÁLISE DE FOTOS</b>", style_secao))
+    # Checklist
+    story.append(Paragraph("<b>2. CHECKLIST DE ELEMENTOS E RESSALVAS LOCATÍCIAS</b>", style_secao))
     story.append(HRFlowable(width="100%", thickness=1, color=AZUL_HEADER, spaceAfter=6))
 
     for i, itm in enumerate(itens_lista):
         uid = itm['id']
-        eh_contestado = status_contestados.get(uid, False)
+        eh_divergente = status_divergentes.get(uid, False)
         
-        status_label = "CONTESTADO / DIVERGENTE" if eh_contestado else "CONCORDA / EM CONFORMIDADE"
-        status_cor = VERMELHO_ALERT if eh_contestado else VERDE_OK
+        status_label = "SOLICITA REVISÃO / RESSALVA" if eh_divergente else "EM CONFORMIDADE / CONFIRMADO"
+        status_cor = VERMELHO_ALERT if eh_divergente else VERDE_OK
         
         style_status = ParagraphStyle(
             'StatusStyle', parent=styles['Normal'],
@@ -240,7 +269,7 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
         item_data = [
             [Paragraph(f"<b>Item {i+1}:</b> {itm['texto']}", style_cell_body), Paragraph(status_label, style_status)]
         ]
-        t_item = Table(item_data, colWidths=[380, 160])
+        t_item = Table(item_data, colWidths=[370, 170])
         t_item.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), CINZA_FUNDO),
             ('BOX', (0, 0), (-1, -1), 0.5, status_cor),
@@ -249,17 +278,15 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
         ]))
         story.append(t_item)
 
-        # Exibe a foto e a Análise Visual da IA para este item
         if uid in fotos_dict:
             img_bytes = fotos_dict[uid]
             img_io = io.BytesIO(img_bytes)
             rl_img = RLImage(img_io, width=220, height=140)
             
-            # Texto do parecer pericial da imagem
             analise_txt = analises_fotos_dict.get(uid, "")
             cap_text = f"<b>Evidência Fotográfica do Item {i+1}</b>"
             if analise_txt:
-                cap_text += f"<br/><br/><b>Parecer da Imagem (IA):</b> {analise_txt}"
+                cap_text += f"<br/><br/><b>Análise da Imagem:</b> {analise_txt}"
             
             legenda = Paragraph(cap_text, style_analise_ia if analise_txt else style_legenda)
             
@@ -273,14 +300,12 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
 
         story.append(Spacer(1, 6))
 
-    # Observações Finais
     if obs_geral:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("<b>3. JUSTIFICATIVA E CONSIDERAÇÕES FINAIS DO LOCATÁRIO</b>", style_secao))
+        story.append(Paragraph("<b>3. CONSIDERAÇÕES FINAIS DO LOCATÁRIO</b>", style_secao))
         story.append(HRFlowable(width="100%", thickness=0.5, color=CINZA_LINHA, spaceAfter=4))
         story.append(Paragraph(obs_geral, style_cell_body))
 
-    # Assinatura
     story.append(Spacer(1, 20))
     story.append(Paragraph("____________________________________________________", style_legenda))
     story.append(Paragraph(f"<b>{cabecalho.get('locatario', 'Locatário Responsável')}</b>", style_legenda))
@@ -290,27 +315,35 @@ def gerar_pdf_contestacao(cabecalho, itens_lista, status_contestados, fotos_dict
     return buffer.getvalue()
 
 # ==========================================
-# 4. INTERFACE PRINCIPAL DO APP
+# 4. INTERFACE PRINCIPAL
 # ==========================================
 st.set_page_config(
-    page_title="Contestação de Vistoria — Checklist Tático",
+    page_title="Revisão de Vistoria Imobiliária",
     page_icon="🏠",
     layout="wide"
 )
 
-st.title("🏠 Contestação de Vistoria Imobiliária")
-st.caption("Sistema Tático de Mapeamento de Divergências e Evidências Locatícias com Análise Visual por IA")
+st.title("🏠 Revisão Técnica de Vistoria Imobiliária")
+st.caption("Sistema de Conferência e Registro de Evidências com Fundamentação na Lei 8.245/1991")
 st.markdown("---")
 
-# --- ETAPA 1: CARGA E PROCESSAMENTO INICIAL ---
+tipo_vistoria = st.radio(
+    "📌 Selecione a Etapa da Vistoria:",
+    ["Entrada (Início do Contrato)", "Saída (Devolução do Imóvel)"],
+    horizontal=True
+)
+
+st.session_state.cabecalho_vistoria["tipo_vistoria"] = "Entrada" if "Entrada" in tipo_vistoria else "Saída"
+
 if not st.session_state.items_vistoria:
-    st.subheader("1. Carregar laudo da imobiliária para gerar checklist")
-    tabs_carga = st.tabs(["📄 Enviar PDF da Imobiliária", "✍️ Cole o Texto do Laudo", "🖊️ Iniciar do Zero"])
+    st.subheader(f"1. Carregar laudo da imobiliária para Revisão de {st.session_state.cabecalho_vistoria['tipo_vistoria']}")
+    tabs_carga = st.tabs(["📄 Enviar PDF do Laudo", "✍️ Cole o Texto da Vistoria", "🖊️ Iniciar Manualmente"])
     
     with tabs_carga[0]:
-        pdf_file = st.file_uploader("Upload do arquivo PDF de vistoria:", type=["pdf"])
-        if pdf_file and st.button("🔍 Extrair Itens do PDF com IA", type="primary"):
-            with st.spinner("Extraindo e categorizando apontamentos do laudo..."):
+        pdf_file = st.file_uploader("Carregue o arquivo PDF do laudo fornecido:", type=["pdf"])
+        
+        if pdf_file and st.button("🔍 Extrair e Gerar Checklist de Revisão", type="primary"):
+            with st.spinner("Analisando laudo e estruturando elementos de conferência..."):
                 texto = ""
                 try:
                     reader = pypdf.PdfReader(pdf_file)
@@ -321,7 +354,7 @@ if not st.session_state.items_vistoria:
                 
                 if texto:
                     st.session_state.texto_vistoria_bruto = texto
-                    res = extrair_itens_vistoria_ia(texto)
+                    res = extrair_itens_vistoria_ia(texto, st.session_state.cabecalho_vistoria["tipo_vistoria"])
                     if res:
                         st.session_state.cabecalho_vistoria.update({
                             "imobiliaria": res.get("imobiliaria", ""),
@@ -331,20 +364,17 @@ if not st.session_state.items_vistoria:
                         st.session_state.items_vistoria = [
                             {"id": time.time()+i, "texto": txt} for i, txt in enumerate(res.get('checklist', []))
                         ]
-                        st.success("Checklist gerado com sucesso!")
+                        st.session_state.parecer_editavel = gerar_parecer_revisao_ia(texto, st.session_state.cabecalho_vistoria["tipo_vistoria"])
+                        st.success("Checklist de revisão criado com sucesso!")
                         st.rerun()
 
     with tabs_carga[1]:
-        texto_colado = st.text_area(
-            "Cole aqui o texto da vistoria recebida:", 
-            height=200, 
-            placeholder="Ex:\nSala: Paredes com pintura nova na cor branca.\nCozinha: Armário com porta desalinhada..."
-        )
-        if st.button("🔍 Gerar Checklist do Texto", type="primary"):
+        texto_colado = st.text_area("Cole aqui o texto da vistoria recebida:", height=200)
+        if st.button("🔍 Processar Texto para Revisão", type="primary"):
             if texto_colado:
                 with st.spinner("Categorizando itens via IA..."):
                     st.session_state.texto_vistoria_bruto = texto_colado
-                    res = extrair_itens_vistoria_ia(texto_colado)
+                    res = extrair_itens_vistoria_ia(texto_colado, st.session_state.cabecalho_vistoria["tipo_vistoria"])
                     if res:
                         st.session_state.cabecalho_vistoria.update({
                             "imobiliaria": res.get("imobiliaria", ""),
@@ -354,23 +384,20 @@ if not st.session_state.items_vistoria:
                         st.session_state.items_vistoria = [
                             {"id": time.time()+i, "texto": txt} for i, txt in enumerate(res.get('checklist', []))
                         ]
+                        st.session_state.parecer_editavel = gerar_parecer_revisao_ia(texto_colado, st.session_state.cabecalho_vistoria["tipo_vistoria"])
                         st.rerun()
-            else:
-                st.warning("Cole o texto do laudo antes de continuar.")
 
     with tabs_carga[2]:
-        if st.button("🖊️ Criar Checklist Manualmente"):
-            st.session_state.items_vistoria = [{"id": time.time(), "texto": "Sala: Defeito ou apontamento a descrever"}]
+        if st.button("🖊️ Iniciar Checklist em Branco"):
+            st.session_state.items_vistoria = [{"id": time.time(), "texto": "Sala - Pintura: Parede com manchas ou marcas aparentes"}]
             st.rerun()
 
-# --- ETAPA 2: PAINEL DE CONFERÊNCIA E EVIDÊNCIAS ---
 else:
     st.sidebar.subheader("⚙️ Ações")
-    if st.sidebar.button("🗑️ Nova Contestação / Limpar"):
+    if st.sidebar.button("🗑️ Nova Revisão / Limpar"):
         st.session_state.clear()
         st.rerun()
 
-    # Cabeçalho Editável do Imóvel
     with st.expander("📋 Dados do Contrato e Imóvel (Editáveis)", expanded=True):
         c1, c2, c3 = st.columns(3)
         st.session_state.cabecalho_vistoria["locatario"] = c1.text_input("Locatário (Inquilino):", value=st.session_state.cabecalho_vistoria["locatario"])
@@ -378,35 +405,39 @@ else:
         st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vistoria["contrato"])
         st.session_state.cabecalho_vistoria["endereco"] = st.text_input("Endereço do Imóvel:", value=st.session_state.cabecalho_vistoria["endereco"])
 
-    st.subheader("✅ Itens de Conferência da Vistoria")
-    st.caption("Marque a caixa **'CONTESTAR'** nos itens que contêm divergências ou avarias e adicione a foto correspondente.")
+    st.subheader("✍️ 1. Parecer Técnico de Revisão Locatícia (Lei 8.245/1991)")
+    st.caption("Ajuste a fundamentação legal que constará na introdução do laudo emitido.")
+    st.session_state.parecer_editavel = st.text_area(
+        "Texto do Parecer (Editável):",
+        value=st.session_state.parecer_editavel,
+        height=140
+    )
+
+    st.subheader(f"✅ 2. Conferência dos Itens ({st.session_state.cabecalho_vistoria['tipo_vistoria']})")
+    st.caption("Marque **'REVISAR'** somente nos itens com divergências, vícios ocultos ou desgastes incorretamente atribuídos ao inquilino.")
 
     for i, itm in enumerate(st.session_state.items_vistoria):
         uid = itm["id"]
         with st.container(border=True):
-            col_ch, col_tx, col_ex = st.columns([0.2, 0.7, 0.1])
+            col_ch, col_tx, col_ex = st.columns([0.25, 0.65, 0.1])
             
-            # Checkbox de Contestação
-            st.session_state.contestados_status[uid] = col_ch.checkbox(
-                "🚨 CONTESTAR", 
+            st.session_state.divergentes_status[uid] = col_ch.checkbox(
+                "⚠️ REVISAR", 
                 key=f"ch_{uid}", 
-                value=st.session_state.contestados_status.get(uid, False)
+                value=st.session_state.divergentes_status.get(uid, False)
             )
             
-            # Texto da descrição do item
             itm["texto"] = col_tx.text_input(f"Item {i+1}", itm["texto"], key=f"in_{uid}", label_visibility="collapsed")
             
-            # Botão excluir
             if col_ex.button("🗑️", key=f"del_{uid}"): 
                 st.session_state.items_vistoria.pop(i)
                 st.rerun()
             
-            # Mídia do Item (Câmera ou Upload)
             if uid not in st.session_state.registros_fotos:
                 t1, t2 = st.tabs(["📸 Câmera", "📁 Galeria de Fotos"])
                 with t1:
                     if st.session_state.camera_ativa == uid:
-                        f = st.camera_input("Tire a foto da avaria:", key=f"cam_{uid}")
+                        f = st.camera_input("Tire a foto da avaria/estado:", key=f"cam_{uid}")
                         if f:
                             img = Image.open(f)
                             buf = io.BytesIO()
@@ -431,26 +462,23 @@ else:
                     del st.session_state.registros_fotos[uid]
                     st.rerun()
 
-    if st.button("➕ Adicionar Novo Item de Vistoria"):
-        st.session_state.items_vistoria.append({"id": time.time(), "texto": "Cômodo: Novo elemento a contestar"})
+    if st.button("➕ Adicionar Item para Conferência"):
+        st.session_state.items_vistoria.append({"id": time.time(), "texto": "Cômodo - Elemento: Descrição do estado real"})
         st.rerun()
 
     st.markdown("---")
     
-    # Campo de justificativa final e síntese
     obs_geral = st.text_area(
-        "Justificativa Legal / Observações Gerais do Locatário:",
-        placeholder="Ex: Solicito a reavaliação dos itens apontados acima, considerando que as avarias foram registradas na entrega das chaves..."
+        "Considerações Finais / Ressalvas Gerais do Inquilino:",
+        placeholder="Ex: Ressalvo que a umidade nas paredes do quarto decorre de vazamento na fachada externa, de responsabilidade do locador..."
     )
 
-    # --- GERADOR DO PDF DE CONTESTAÇÃO ---
-    if st.button("🚀 GERAR LAUDO DE CONTESTAÇÃO EM PDF", type="primary", use_container_width=True):
+    if st.button("🚀 GERAR LAUDO DE REVISÃO TÉCNICA EM PDF", type="primary", use_container_width=True):
         if not st.session_state.cabecalho_vistoria["locatario"]:
             st.error("Por favor, preencha o nome do Locatário (Inquilino) nos dados do imóvel.")
         else:
-            with st.spinner("Analisando imagens enviadas e compilando PDF via ReportLab..."):
+            with st.spinner("Analisando imagens e compilando relatório de revisão legal..."):
                 try:
-                    # 1. Analisa as fotos individualmente com modelo visual
                     analises_fotos_dict = {}
                     for itm in st.session_state.items_vistoria:
                         uid = itm['id']
@@ -462,37 +490,21 @@ else:
                             if analise_img:
                                 analises_fotos_dict[uid] = analise_img
 
-                    # 2. Parecer geral da IA em texto
-                    parecer_ia = ""
-                    if client and st.session_state.texto_vistoria_bruto:
-                        prompt_parecer = (
-                            "Com base nos itens do checklist e na vistoria recebida, elabore um parágrafo "
-                            "resumido, formal e técnico em Português contestando formalmente o laudo perante a imobiliária."
-                        )
-                        res_ia = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=[{"role": "user", "content": prompt_parecer + "\n\nTexto:\n" + st.session_state.texto_vistoria_bruto[:2000]}],
-                            temperature=0.2,
-                            max_tokens=300
-                        )
-                        parecer_ia = res_ia.choices[0].message.content
-
-                    # 3. Geração do PDF completo
-                    pdf_bytes = gerar_pdf_contestacao(
+                    pdf_bytes = gerar_pdf_revisao(
                         cabecalho=st.session_state.cabecalho_vistoria,
                         itens_lista=st.session_state.items_vistoria,
-                        status_contestados=st.session_state.contestados_status,
+                        status_divergentes=st.session_state.divergentes_status,
                         fotos_dict=st.session_state.registros_fotos,
                         analises_fotos_dict=analises_fotos_dict,
                         obs_geral=obs_geral,
-                        parecer_ia=parecer_ia
+                        parecer_texto=st.session_state.parecer_editavel
                     )
 
-                    st.success("Laudo com análises fotográficas gerado com sucesso!")
+                    st.success("Laudo de Revisão gerado com sucesso!")
                     st.download_button(
-                        label="📄 Baixar Laudo de Contestação (PDF Oficial)",
+                        label="📄 Baixar Laudo de Revisão Técnica (PDF Oficial)",
                         data=pdf_bytes,
-                        file_name=f"Contestacao_Vistoria_{datetime.now().strftime('%d%m%Y')}.pdf",
+                        file_name=f"Revisao_Vistoria_{st.session_state.cabecalho_vistoria['tipo_vistoria']}_{datetime.now().strftime('%d%m%Y')}.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
