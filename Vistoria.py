@@ -1,10 +1,16 @@
 import streamlit as st
 from groq import Groq
 from PIL import Image
-from fpdf import FPDF
 import pypdf
 import base64
 import io
+import re
+
+# ReportLab para layout e formatação profissional de PDF
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # ---------------------------------------------------------
 # CONFIGURAÇÃO DA PÁGINA
@@ -69,28 +75,94 @@ def encode_image_to_base64(pil_image, max_size=(600, 600), quality=60):
     pil_image.save(buffered, format="JPEG", quality=quality)
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-def gerar_pdf(texto_analise):
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
+def purificar_texto_para_pdf(texto_bruto):
+    """Remove marcações Markdown (###, **, -) e converte para tags HTML aceitas pelo ReportLab."""
+    if not texto_bruto:
+        return ""
     
-    # Título principal
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(190, 10, "Laudo de Contestacao de Vistoria Imobiliaria", ln=True, align='C')
-    pdf.ln(5)
+    linhas = texto_bruto.split('\n')
+    linhas_processadas = []
     
-    # Corpo do texto
-    pdf.set_font("Arial", size=10)
-    texto_limpo = texto_analise.encode('latin-1', 'replace').decode('latin-1')
-    
-    for linha in texto_limpo.split('\n'):
-        linha_formatada = linha.strip()
-        if linha_formatada:
-            pdf.multi_cell(190, 6, linha_formatada)
-        else:
-            pdf.ln(3)
+    for l in linhas:
+        l_str = l.strip()
+        if not l_str:
+            linhas_processadas.append("")
+            continue
+            
+        # Converte negrito e itálico do Markdown para tags HTML
+        l_str = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', l_str)
+        l_str = re.sub(r'\*(.*?)\*', r'<i>\1</i>', l_str)
         
-    return bytes(pdf.output())
+        # Remove marcadores de cabeçalho Markdown (###, ##, #)
+        l_str = re.sub(r'^#+\s*', '', l_str)
+        
+        # Ajusta marcadores de listas
+        if l_str.startswith("- ") or l_str.startswith("* "):
+            l_str = "• " + l_str[2:].strip()
+            
+        linhas_processadas.append(l_str)
+        
+    return "\n".join(linhas_processadas)
+
+def gerar_pdf(texto_analise):
+    """Gera um PDF elegante e estruturado utilizando ReportLab."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40
+    )
+    
+    styles = getSampleStyleSheet()
+    
+    # Cores executivas
+    AZUL_HEADER = colors.HexColor("#1e3a8a")
+    CINZA_TEXTO = colors.HexColor("#1f2937")
+    CINZA_LINHA = colors.HexColor("#cbd5e1")
+    
+    # Estilos de parágrafos
+    style_titulo = ParagraphStyle(
+        'DocTitle', parent=styles['Heading1'],
+        fontSize=14, leading=18, textColor=AZUL_HEADER,
+        fontName="Helvetica-Bold", alignment=1, spaceAfter=12
+    )
+    
+    style_secao = ParagraphStyle(
+        'SecTitle', parent=styles['Heading2'],
+        fontSize=11, leading=15, textColor=AZUL_HEADER,
+        fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4
+    )
+    
+    style_corpo = ParagraphStyle(
+        'BodyTextCustom', parent=styles['Normal'],
+        fontSize=9.5, leading=13.5, textColor=CINZA_TEXTO,
+        fontName="Helvetica", spaceAfter=5
+    )
+
+    story = []
+
+    # Banner do Título
+    story.append(Paragraph("LAUDO DE CONTESTAÇÃO DE VISTORIA IMOBILIÁRIA", style_titulo))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=AZUL_HEADER, spaceAfter=12))
+
+    texto_limpo = purificar_texto_para_pdf(texto_analise)
+    linhas = texto_limpo.split('\n')
+
+    for l in linhas:
+        if not l:
+            story.append(Spacer(1, 3))
+            continue
+            
+        # Identifica seções principais para destacar visualmente
+        if re.match(r'^(\d+\.|\bConclusão\b|\bAtenciosamente\b)', l, re.IGNORECASE):
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(l, style_secao))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=CINZA_LINHA, spaceAfter=5))
+        else:
+            story.append(Paragraph(l, style_corpo))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # ---------------------------------------------------------
 # INTERFACE PRINCIPAL - ENTRADA DE DADOS
@@ -244,5 +316,5 @@ if 'resultado_analise' in st.session_state:
         data=pdf_bytes,
         file_name="contestacao_vistoria_imobiliaria.pdf",
         mime="application/pdf"
-    )
+            )
     
