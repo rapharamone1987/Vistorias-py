@@ -114,21 +114,23 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
     prompt = (
         f"Você é um Perito Especialista em Vistorias Imobiliárias (Lei 8.245/91).\n"
         f"Analise o laudo referente a uma VISTORIA DE {tipo_vistoria.upper()}.\n"
-        "REGRAS ESTRITAS DE EXTRAÇÃO:\n"
-        "1. PROIBIDO criar itens genéricos como 'Sala: Não há informações' ou 'Cozinha: Boas condições'.\n"
-        "2. Se um cômodo não tiver elementos específicos detalhados, NÃO inclua esse cômodo.\n"
-        "3. Extraia APENAS elementos físicos concretos descritos no laudo (Pintura, Pisos, Aberturas, Metais, Louças, Fechaduras, Elétrica).\n"
-        "4. Aponte cada item obrigatoriamente no formato 'Cômodo - Elemento: Estado detalhado'.\n"
+        "INSTRUÇÃO CRÍTICA DE LEITURA:\n"
+        "1. IGNORE completamente a seção de 'OBSERVAÇÕES', regras de locação, cláusulas ou instruções de condomínio do início do laudo.\n"
+        "2. Vá DIRETO para a seção de 'DESCRIÇÃO DO IMÓVEL' / cômodos (Sala, Cozinha, Banheiro, Dormitórios, etc.).\n"
+        "3. Extraia TODOS os elementos físicos vistoriados (Porta, Piso, Paredes, Janela, Elétrica, Hidráulica, Louças, Plafons, Fechaduras).\n"
+        "4. É OBRIGATÓRIO gerar um item individual para CADA elemento de CADA cômodo, no formato 'Cômodo - Elemento: Detalhe do estado'.\n"
+        "5. PROIBIDO resumir tudo em 'Imóvel - Pintura: Pintura nova' ou similar.\n\n"
         "Responda EXCLUSIVAMENTE em JSON válido neste formato:\n"
         '{\n'
-        '  "imobiliaria": "nome da imobiliária",\n'
+        '  "imobiliaria": "MVM Administração de Imóveis",\n'
         '  "locatario": "nome do inquilino",\n'
-        '  "endereco": "endereço do imóvel",\n'
+        '  "endereco": "endereço completo",\n'
         '  "checklist": [\n'
-        '     "Sala - Pintura: Parede principal com tinta nova branca",\n'
-        '     "Sala - Aberturas: Janela de alumínio com fecho e vidros íntegros",\n'
-        '     "Cozinha - Metais: Torneira cromada com marca de uso no manípulo",\n'
-        '     "Banheiro - Louças: Vaso sanitário com assento plástico instalado"\n'
+        '     "Sala/Cozinha - Porta: Madeira semi oca com manchas de tinta e cimento",\n'
+        '     "Sala/Cozinha - Piso: Lajota 50x50cm creme com 07 peças trincadas e desníveis",\n'
+        '     "Sala/Cozinha - Paredes: Textura casca de laranja com pintura acrílica nova branca",\n'
+        '     "Banheiro - Louças: Pia de louça com coluna e vaso com caixa acoplada Deca sem assento",\n'
+        '     "Dormitório Direita - Piso: Lajota 50x50cm com lascas e trincados"\n'
         '  ]\n'
         '}'
     )
@@ -136,13 +138,13 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
         try:
             res = client.chat.completions.create(
                 model="llama-3.3-70b-versatile", 
-                messages=[{"role": "user", "content": prompt + "\n\nTexto do Laudo:\n" + texto_entrada[:4000]}], 
+                messages=[{"role": "user", "content": prompt + "\n\nTexto Completo do Laudo:\n" + texto_entrada}], 
                 temperature=0.0,
-                max_tokens=1500
+                max_tokens=2500
             )
             data = limpar_json_ia(res.choices[0].message.content)
             if data and "checklist" in data:
-                padroes_genericos = r'(não há informação|sem informação|não informado|boas condições gerais|sem observações|conforme laudo|conforme vistoria)'
+                padroes_genericos = r'(não há informação|sem informação|não informado|boas condições gerais|sem observações)'
                 data["checklist"] = [
                     item for item in data["checklist"] 
                     if not re.search(padroes_genericos, item, re.IGNORECASE) and " - " in item
@@ -151,6 +153,7 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
         except Exception as e:
             st.warning(f"Aviso na extração por IA: {e}")
     return None
+
 
 def gerar_parecer_revisao_ia(texto_bruto, tipo_vistoria):
     if not client or not texto_bruto:
