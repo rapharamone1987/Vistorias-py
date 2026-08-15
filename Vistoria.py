@@ -434,8 +434,10 @@ else:
         st.session_state.clear()
         st.rerun()
 
-    with st.expander("📋 Dados do Contrato e Imóvel (Editáveis)", expanded=True):
-        c1, c2, c3 = st.
+        with st.expander("📋 Dados do Contrato e Imóvel (Editáveis)", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        st.session_state.cabecalho_vistoria["locatario"] = c1.text_input("Locatário (Inquilino):", value=st.session_state.cabecalho_vistoria["locatario"])
+        st.session_state.cabecalho_vistoria["imobiliaria"] = c2.text_input("Imobiliária / Vistoriador:", value=st.session_state.cabecalho_vistoria["imobiliaria"])
         st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vistoria["contrato"])
         st.session_state.cabecalho_vistoria["endereco"] = st.text_input("Endereço do Imóvel:", value=st.session_state.cabecalho_vistoria["endereco"])
 
@@ -557,4 +559,5 @@ else:
                     )
                 except Exception as e:
                     st.error(f"Erro ao gerar o PDF: {e}")
-                            
+                    
+    
