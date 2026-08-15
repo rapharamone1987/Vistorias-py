@@ -434,4 +434,124 @@ else:
         c1, c2, c3 = st.columns(3)
         st.session_state.cabecalho_vistoria["locatario"] = c1.text_input("Locatário (Inquilino):", value=st.session_state.cabecalho_vistoria["locatario"])
         st.session_state.cabecalho_vistoria["imobiliaria"] = c2.text_input("Imobiliária / Vistoriador:", value=st.session_state.cabecalho_vistoria["imobiliaria"])
-        st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vist
+                st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vistoria["contrato"])
+        st.session_state.cabecalho_vistoria["endereco"] = st.text_input("Endereço do Imóvel:", value=st.session_state.cabecalho_vistoria["endereco"])
+
+    st.subheader("✍️ 1. Parecer Técnico de Revisão Locatícia (Lei 8.245/1991)")
+    st.caption("Ajuste a fundamentação legal que constará na introdução do laudo emitido.")
+    st.session_state.parecer_editavel = st.text_area(
+        "Texto do Parecer (Editável):",
+        value=st.session_state.parecer_editavel,
+        height=140
+    )
+
+    st.subheader(f"✅ 2. Conferência dos Itens ({st.session_state.cabecalho_vistoria['tipo_vistoria']})")
+    st.caption("Marque **'REVISAR'** nos itens divergentes e anexe a foto da evidência.")
+
+    for i, itm in enumerate(st.session_state.items_vistoria):
+        uid = itm["id"]
+        with st.container(border=True):
+            col_ch, col_tx, col_ex = st.columns([0.25, 0.65, 0.1])
+            
+            st.session_state.divergentes_status[uid] = col_ch.checkbox(
+                "⚠️ REVISAR", 
+                key=f"ch_{uid}", 
+                value=st.session_state.divergentes_status.get(uid, False)
+            )
+            
+            itm["texto"] = col_tx.text_input(f"Item {i+1}", itm["texto"], key=f"in_{uid}", label_visibility="collapsed")
+            
+            if col_ex.button("🗑️", key=f"del_{uid}"): 
+                st.session_state.items_vistoria.pop(i)
+                st.rerun()
+            
+            if uid not in st.session_state.registros_fotos:
+                t1, t2 = st.tabs(["📸 Câmera", "📁 Galeria de Fotos"])
+                with t1:
+                    if st.session_state.camera_ativa == uid:
+                        f = st.camera_input("Tire a foto da avaria/estado:", key=f"cam_{uid}")
+                        if f:
+                            img = Image.open(f)
+                            buf = io.BytesIO()
+                            img.save(buf, format="JPEG", quality=70)
+                            bytes_img = buf.getvalue()
+                            st.session_state.registros_fotos[uid] = bytes_img
+                            
+                            with st.spinner("IA analisando foto do item..."):
+                                st.session_state.analises_fotos_editaveis[uid] = analisar_foto_item_ia(bytes_img, itm["texto"])
+                            
+                            st.session_state.camera_ativa = None
+                            st.rerun()
+                    elif st.button("Abrir Câmera", key=f"btn_c_{uid}"):
+                        st.session_state.camera_ativa = uid
+                        st.rerun()
+                with t2:
+                    up = st.file_uploader("Upload da foto do item:", type=["jpg", "jpeg", "png"], key=f"up_{uid}")
+                    if up:
+                        img = Image.open(up)
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG", quality=70)
+                        bytes_img = buf.getvalue()
+                        st.session_state.registros_fotos[uid] = bytes_img
+                        
+                        with st.spinner("IA analisando foto do item..."):
+                            st.session_state.analises_fotos_editaveis[uid] = analisar_foto_item_ia(bytes_img, itm["texto"])
+                        st.rerun()
+            else:
+                col_img, col_txt_ia = st.columns([0.35, 0.65])
+                with col_img:
+                    st.image(st.session_state.registros_fotos[uid], width=220, caption=f"Foto Anexada ao Item {i+1}")
+                    if st.button("Remover Foto", key=f"rm_{uid}"):
+                        del st.session_state.registros_fotos[uid]
+                        if uid in st.session_state.analises_fotos_editaveis:
+                            del st.session_state.analises_fotos_editaveis[uid]
+                        st.rerun()
+                
+                with col_txt_ia:
+                    if uid not in st.session_state.analises_fotos_editaveis or not st.session_state.analises_fotos_editaveis[uid]:
+                        st.session_state.analises_fotos_editaveis[uid] = analisar_foto_item_ia(st.session_state.registros_fotos[uid], itm["texto"])
+                        
+                    st.session_state.analises_fotos_editaveis[uid] = st.text_area(
+                        "🔍 Análise Pericial da Foto (Editável):",
+                        value=st.session_state.analises_fotos_editaveis[uid],
+                        key=f"txt_ia_{uid}",
+                        height=100
+                    )
+
+    if st.button("➕ Adicionar Item para Conferência"):
+        st.session_state.items_vistoria.append({"id": time.time(), "texto": "Cômodo - Elemento: Descrição do estado real"})
+        st.rerun()
+
+    st.markdown("---")
+    
+    obs_geral = st.text_area(
+        "Considerações Finais / Ressalvas Gerais do Inquilino:",
+        placeholder="Ex: Ressalvo que a umidade nas paredes do quarto decorre de vazamento na fachada externa, de responsabilidade do locador..."
+    )
+
+    if st.button("🚀 GERAR LAUDO DE REVISÃO TÉCNICA EM PDF", type="primary", use_container_width=True):
+        if not st.session_state.cabecalho_vistoria["locatario"]:
+            st.error("Por favor, preencha o nome do Locatário (Inquilino) nos dados do imóvel.")
+        else:
+            with st.spinner("Compilando relatório de revisão legal..."):
+                try:
+                    pdf_bytes = gerar_pdf_revisao(
+                        cabecalho=st.session_state.cabecalho_vistoria,
+                        itens_lista=st.session_state.items_vistoria,
+                        status_divergentes=st.session_state.divergentes_status,
+                        fotos_dict=st.session_state.registros_fotos,
+                        analises_fotos_dict=st.session_state.analises_fotos_editaveis,
+                        obs_geral=obs_geral,
+                        parecer_texto=st.session_state.parecer_editavel
+                    )
+
+                    st.success("Laudo de Revisão gerado com sucesso!")
+                    st.download_button(
+                        label="📄 Baixar Laudo de Revisão Técnica (PDF Oficial)",
+                        data=pdf_bytes,
+                        file_name=f"Revisao_Vistoria_{st.session_state.cabecalho_vistoria['tipo_vistoria']}_{datetime.now().strftime('%d%m%Y')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao gerar o PDF: {e}")
