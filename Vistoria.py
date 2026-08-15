@@ -429,7 +429,6 @@ if not st.session_state.items_vistoria:
             st.rerun()
 
 else:
-else:
     st.sidebar.subheader("⚙️ Ações")
     if st.sidebar.button("🗑️ Nova Revisão / Limpar"):
         st.session_state.clear()
