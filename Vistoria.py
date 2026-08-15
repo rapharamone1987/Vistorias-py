@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 st.title("🏠 Auxiliar de Contestação de Vistoria Imobiliária")
-st.write("Compare o laudo oficial com fotos do imóvel para gerar uma contestação fundamentada via **Groq**.")
+st.write("Compare o laudo oficial com fotos do imóvel usando o **Llama 3.2 90B Vision**.")
 
 # ---------------------------------------------------------
 # AUTENTICAÇÃO / OBTENÇÃO DA GROQ API KEY
@@ -38,41 +38,34 @@ else:
     st.warning("⚠️ Insira sua API Key da Groq (console.groq.com) para começar.")
     st.stop()
 
-# Inicializa o armazenamento de fotos tiradas na hora
+# Armazenamento de fotos tiradas pela câmera
 if 'fotos_camera' not in st.session_state:
     st.session_state['fotos_camera'] = []
 
 # ---------------------------------------------------------
 # FUNÇÕES AUXILIARES
 # ---------------------------------------------------------
-def extrair_texto_arquivo(arquivo):
+def extrair_texto_arquivo(arquivo, max_caracteres=3500):
+    texto = ""
     if arquivo.name.endswith('.pdf'):
         try:
             pdf_reader = pypdf.PdfReader(arquivo)
-            texto = ""
             for page in pdf_reader.pages:
                 texto += page.extract_text() + "\n"
-            return texto
         except Exception as e:
             return f"Erro ao ler PDF: {e}"
     elif arquivo.name.endswith('.txt'):
-        return arquivo.read().decode('utf-8', errors='ignore')
-    return ""
-
-def encode_image_to_base64(pil_image, max_size=(800, 800), quality=75):
-    """
-    Redimensiona e comprime a imagem para reduzir drasticamente
-    o consumo de tokens no payload em Base64 para a API do Groq.
-    """
-    buffered = io.BytesIO()
+        texto = arquivo.read().decode('utf-8', errors='ignore')
     
+    if len(texto) > max_caracteres:
+        texto = texto[:max_caracteres] + "\n...[texto truncado]..."
+    return texto
+
+def encode_image_to_base64(pil_image, max_size=(600, 600), quality=60):
+    buffered = io.BytesIO()
     if pil_image.mode != "RGB":
         pil_image = pil_image.convert("RGB")
-        
-    # Redimensiona mantendo proporção
     pil_image.thumbnail(max_size, Image.Resampling.LANCZOS)
-    
-    # Salva comprimido em JPEG
     pil_image.save(buffered, format="JPEG", quality=quality)
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
@@ -96,15 +89,12 @@ def gerar_pdf(texto_analise):
 st.header("1. Documentação e Evidências")
 col1, col2 = st.columns(2)
 
-# --- COLUNA 1: LAUDO DA IMOBILIÁRIA ---
 with col1:
     st.subheader("📄 Laudo da Imobiliária")
-    
     arquivo_laudo = st.file_uploader(
         "Carregue o arquivo do laudo da imobiliária (PDF ou TXT):",
         type=["pdf", "txt"]
     )
-    
     laudo_texto_manual = st.text_area(
         "Ou cole o texto do laudo da imobiliária aqui:",
         height=150,
@@ -116,14 +106,12 @@ with col1:
         texto_extraido = extrair_texto_arquivo(arquivo_laudo)
         if texto_extraido:
             texto_laudo_final = texto_extraido
-            st.info("✅ Texto do arquivo de vistoria extraído com sucesso!")
+            st.info("✅ Texto do arquivo extraído com sucesso!")
     elif laudo_texto_manual:
-        texto_laudo_final = laudo_texto_manual
+        texto_laudo_final = laudo_texto_manual[:3500]
 
-# --- COLUNA 2: EVIDÊNCIAS DO INQUILINO ---
 with col2:
     st.subheader("📸 Evidências do Inquilino")
-    
     fotos_upload = st.file_uploader(
         "Carregue fotos salvas do imóvel (JPEG/PNG):",
         type=["jpg", "jpeg", "png"],
@@ -145,7 +133,6 @@ with col2:
             st.session_state['fotos_camera'] = []
             st.rerun()
 
-# Consolida todas as imagens
 imagens_totais = []
 if fotos_upload:
     for f in fotos_upload:
@@ -154,32 +141,29 @@ if st.session_state['fotos_camera']:
     imagens_totais.extend(st.session_state['fotos_camera'])
 
 # ---------------------------------------------------------
-# PROCESSAMENTO E ANÁLISE COM GROQ
+# PROCESSAMENTO COM LLAMA-3.2-90B-VISION-PREVIEW
 # ---------------------------------------------------------
 st.divider()
 
-if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_container_width=True):
+if st.button("🔍 Analisar e Comparar Vistoria (Llama 90B)", type="primary", use_container_width=True):
     if not texto_laudo_final:
         st.error("Por favor, envie o arquivo do laudo ou cole o texto da vistoria.")
     elif not imagens_totais:
         st.error("Por favor, envie ou tire ao menos uma foto como evidência.")
     else:
-        with st.spinner("Otimizando imagens e analisando divergências via Groq..."):
+        with st.spinner("Analisando evidências visuais e laudo via Llama 3.2 90B Vision..."):
             try:
                 prompt_text = f"""
-                Você é um perito especialista em vistorias imobiliárias e direito do inquilino.
-                Análise o laudo fornecido pela imobiliária e compare rigorosamente com as evidências (fotos) enviadas pelo inquilino.
+                Você é um perito em vistorias imobiliárias e direito do inquilino.
+                Compare o laudo fornecido com as evidências visuais capturadas nas fotos.
 
-                Texto/Conteúdo da Vistoria da Imobiliária:
+                --- LAUDO DA IMOBILIÁRIA ---
                 {texto_laudo_final}
 
-                Instruções para a análise:
-                1. Avalie detalhadamente o estado das superfícies, pintura, manchas de umidade, arranhões, furos, trincas ou defeitos visíveis nas imagens.
-                2. Verifique se o laudo da imobiliária descreve com precisão o estado real do imóvel ou se omitiu/descreveu incorretamente algum detalhe.
-                3. Identifique onde há discordâncias claras.
-                4. Elabore uma contestação formal, técnica e respeitosa para cada ponto divergente, citando o cômodo e o problema identificado para que o inquilino possa protocolar na imobiliária.
-
-                Estruture a resposta de forma clara, dividida por cômodos ou pontos contestados.
+                --- INSTRUÇÕES DE ANÁLISE ---
+                1. Avalie detalhadamente o estado das superfícies, pintura, manchas ou avarias visíveis nas imagens.
+                2. Aponta discordâncias técnicas em relação ao laudo da imobiliária.
+                3. Escreva uma contestação formal e bem fundamentada separada por cômodo.
                 """
 
                 content_payload = [
@@ -189,8 +173,8 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                     }
                 ]
 
-                # Seleciona até 4 fotos principais e comprime para não estourar a cota de tokens (TPM)
-                for img in imagens_totais[:4]:
+                # Adiciona até 2 fotos otimizadas para respeitar o limite de tokens
+                for img in imagens_totais[:2]:
                     base64_str = encode_image_to_base64(img)
                     content_payload.append({
                         "type": "image_url",
@@ -200,7 +184,7 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                     })
 
                 completion = client.chat.completions.create(
-                    model="qwen/qwen3.6-27b",
+                    model="llama-3.2-90b-vision-preview",
                     messages=[
                         {
                             "role": "user",
@@ -208,7 +192,7 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                         }
                     ],
                     temperature=0.2,
-                    max_tokens=2048
+                    max_tokens=1500
                 )
 
                 resultado_texto = completion.choices[0].message.content
@@ -220,7 +204,7 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                 st.session_state['resultado_analise'] = resultado_texto
 
             except Exception as e:
-                st.error(f"Erro ao processar a solicitação na Groq: {e}")
+                st.error(f"Erro na requisição: {e}")
 
 # ---------------------------------------------------------
 # GERADOR DE PDF DE CONTESTAÇÃO
