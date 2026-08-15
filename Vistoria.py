@@ -8,7 +8,7 @@ import re
 
 # ReportLab para layout e formatação profissional de PDF
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -67,13 +67,17 @@ def extrair_texto_arquivo(arquivo, max_caracteres=3500):
         texto = texto[:max_caracteres] + "\n...[texto truncado]..."
     return texto
 
-def encode_image_to_base64(pil_image, max_size=(600, 600), quality=60):
+def otimizar_imagem_para_bytes(pil_image, max_size=(600, 600), quality=70):
+    """Gera bytes comprimidos da imagem para uso na API e no ReportLab."""
     buffered = io.BytesIO()
     if pil_image.mode != "RGB":
         pil_image = pil_image.convert("RGB")
     pil_image.thumbnail(max_size, Image.Resampling.LANCZOS)
     pil_image.save(buffered, format="JPEG", quality=quality)
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')
+    return buffered.getvalue()
+
+def encode_image_to_base64(raw_bytes):
+    return base64.b64encode(raw_bytes).decode('utf-8')
 
 def purificar_texto_para_pdf(texto_bruto):
     """Remove marcações Markdown (###, **, -) e converte para tags HTML aceitas pelo ReportLab."""
@@ -89,14 +93,10 @@ def purificar_texto_para_pdf(texto_bruto):
             linhas_processadas.append("")
             continue
             
-        # Converte negrito e itálico do Markdown para tags HTML
         l_str = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', l_str)
         l_str = re.sub(r'\*(.*?)\*', r'<i>\1</i>', l_str)
-        
-        # Remove marcadores de cabeçalho Markdown (###, ##, #)
         l_str = re.sub(r'^#+\s*', '', l_str)
         
-        # Ajusta marcadores de listas
         if l_str.startswith("- ") or l_str.startswith("* "):
             l_str = "• " + l_str[2:].strip()
             
@@ -104,8 +104,8 @@ def purificar_texto_para_pdf(texto_bruto):
         
     return "\n".join(linhas_processadas)
 
-def gerar_pdf(texto_analise):
-    """Gera um PDF elegante e estruturado utilizando ReportLab."""
+def gerar_pdf(texto_analise, fotos_bytes_list):
+    """Gera o PDF da contestação incluindo o parecer e a anexo de fotos."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=letter,
@@ -113,37 +113,38 @@ def gerar_pdf(texto_analise):
     )
     
     styles = getSampleStyleSheet()
-    
-    # Cores executivas
     AZUL_HEADER = colors.HexColor("#1e3a8a")
     CINZA_TEXTO = colors.HexColor("#1f2937")
     CINZA_LINHA = colors.HexColor("#cbd5e1")
     
-    # Estilos de parágrafos
     style_titulo = ParagraphStyle(
         'DocTitle', parent=styles['Heading1'],
         fontSize=14, leading=18, textColor=AZUL_HEADER,
         fontName="Helvetica-Bold", alignment=1, spaceAfter=12
     )
-    
     style_secao = ParagraphStyle(
         'SecTitle', parent=styles['Heading2'],
         fontSize=11, leading=15, textColor=AZUL_HEADER,
         fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4
     )
-    
     style_corpo = ParagraphStyle(
         'BodyTextCustom', parent=styles['Normal'],
         fontSize=9.5, leading=13.5, textColor=CINZA_TEXTO,
         fontName="Helvetica", spaceAfter=5
     )
+    style_legenda = ParagraphStyle(
+        'CapStyle', parent=styles['Normal'],
+        fontSize=8.5, leading=11, textColor=CINZA_TEXTO,
+        fontName="Helvetica-Bold", alignment=1
+    )
 
     story = []
 
-    # Banner do Título
+    # Cabeçalho Principal
     story.append(Paragraph("LAUDO DE CONTESTAÇÃO DE VISTORIA IMOBILIÁRIA", style_titulo))
     story.append(HRFlowable(width="100%", thickness=1.5, color=AZUL_HEADER, spaceAfter=12))
 
+    # Corpo do Parecer
     texto_limpo = purificar_texto_para_pdf(texto_analise)
     linhas = texto_limpo.split('\n')
 
@@ -152,13 +153,45 @@ def gerar_pdf(texto_analise):
             story.append(Spacer(1, 3))
             continue
             
-        # Identifica seções principais para destacar visualmente
         if re.match(r'^(\d+\.|\bConclusão\b|\bAtenciosamente\b)', l, re.IGNORECASE):
             story.append(Spacer(1, 4))
             story.append(Paragraph(l, style_secao))
             story.append(HRFlowable(width="100%", thickness=0.5, color=CINZA_LINHA, spaceAfter=5))
         else:
             story.append(Paragraph(l, style_corpo))
+
+    # Anexo de Evidências Fotográficas
+    if fotos_bytes_list:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("ANEXO: REGISTROS FOTOGRÁFICOS DE EVIDÊNCIAS", style_secao))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=CINZA_LINHA, spaceAfter=10))
+        
+        tabela_fotos_data = []
+        linha_atual = []
+        
+        for i, f_bytes in enumerate(fotos_bytes_list):
+            img_io = io.BytesIO(f_bytes)
+            rl_img = RLImage(img_io, width=240, height=160)
+            legenda = Paragraph(f"Evidência Fotográfica {i+1}", style_legenda)
+            celula = [rl_img, Spacer(1, 3), legenda]
+            linha_atual.append(celula)
+            
+            if len(linha_atual) == 2:
+                tabela_fotos_data.append(linha_atual)
+                linha_atual = []
+                
+        if linha_atual:
+            if len(linha_atual) == 1:
+                linha_atual.append("")
+            tabela_fotos_data.append(linha_atual)
+            
+        t_fotos = Table(tabela_fotos_data, colWidths=[250, 250])
+        t_fotos.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(t_fotos)
 
     doc.build(story)
     buffer.seek(0)
@@ -234,7 +267,6 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
     else:
         with st.spinner("Analisando fotos com modelo de visão e gerando laudo com Llama 3.3 70B..."):
             try:
-                # ETAPA 1: Processamento de Visão Computacional
                 content_payload = [
                     {
                         "type": "text",
@@ -242,8 +274,15 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
                     }
                 ]
 
-                for img in imagens_totais[:2]:
-                    base64_str = encode_image_to_base64(img)
+                # Prepara imagens otimizadas para API e para o PDF
+                fotos_bytes_processadas = []
+                for img in imagens_totais:
+                    img_bytes = otimizar_imagem_para_bytes(img)
+                    fotos_bytes_processadas.append(img_bytes)
+
+                # Anexa até 2 imagens na chamada visual da API
+                for img_bytes in fotos_bytes_processadas[:2]:
+                    base64_str = encode_image_to_base64(img_bytes)
                     content_payload.append({
                         "type": "image_url",
                         "image_url": {
@@ -268,7 +307,6 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
                 
                 descricao_visual = vision_resp.choices[0].message.content
 
-                # ETAPA 2: Redação da Contestação Técnica (Llama 3.3 70B Versatile)
                 prompt_contestacao = f"""
                 Você é um perito em vistorias imobiliárias e direito do inquilino.
                 Elabore uma contestação formal e bem fundamentada comparando o laudo da imobiliária com as evidências reais das fotos.
@@ -297,7 +335,9 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
                 st.subheader("📌 Resultado da Avaliação e Contestação")
                 st.markdown(resultado_texto)
                 
+                # Guarda o texto e a lista de bytes das fotos no session_state
                 st.session_state['resultado_analise'] = resultado_texto
+                st.session_state['fotos_pdf_bytes'] = fotos_bytes_processadas
 
             except Exception as e:
                 st.error(f"Erro na requisição: {e}")
@@ -309,12 +349,15 @@ if 'resultado_analise' in st.session_state:
     st.divider()
     st.subheader("2. Gerar Documento de Contestação")
 
-    pdf_bytes = gerar_pdf(st.session_state['resultado_analise'])
+    pdf_bytes = gerar_pdf(
+        st.session_state['resultado_analise'],
+        st.session_state.get('fotos_pdf_bytes', [])
+    )
 
     st.download_button(
-        label="📄 Baixar Laudo de Contestação em PDF",
+        label="📄 Baixar Laudo de Contestação com Fotos em PDF",
         data=pdf_bytes,
         file_name="contestacao_vistoria_imobiliaria.pdf",
         mime="application/pdf"
-            )
+    )
     
