@@ -434,7 +434,7 @@ else:
         c1, c2, c3 = st.columns(3)
         st.session_state.cabecalho_vistoria["locatario"] = c1.text_input("Locatário (Inquilino):", value=st.session_state.cabecalho_vistoria["locatario"])
         st.session_state.cabecalho_vistoria["imobiliaria"] = c2.text_input("Imobiliária / Vistoriador:", value=st.session_state.cabecalho_vistoria["imobiliaria"])
-                st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vistoria["contrato"])
+        st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vistoria["contrato"])
         st.session_state.cabecalho_vistoria["endereco"] = st.text_input("Endereço do Imóvel:", value=st.session_state.cabecalho_vistoria["endereco"])
 
     st.subheader("✍️ 1. Parecer Técnico de Revisão Locatícia (Lei 8.245/1991)")
