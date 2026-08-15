@@ -1,118 +1,191 @@
 import streamlit as st
 from google import genai
 from google.genai.errors import APIError
+from PIL import Image
 import tempfile
 import time
 import os
 from fpdf import FPDF
 
-st.set_page_config(page_title="Vistoria Imobiliária - Análise de Vídeo", page_icon="🎥", layout="wide")
+# ---------------------------------------------------------
+# CONFIGURAÇÃO DA PÁGINA
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="Contestação de Vistoria Imobiliária",
+    page_icon="🏠",
+    layout="wide"
+)
 
-st.title("🎥 Vistoria Imobiliária - Contestação com IA")
-st.write("Análise gratuita de vídeos e imagens para contestação de vistoria.")
+st.title("🏠 Auxiliar de Contestação de Vistoria Imobiliária")
+st.write("Compare a vistoria da imobiliária com fotos e vídeos reais do imóvel para gerar uma contestação fundamentada.")
 
-# API Key
-api_key = st.sidebar.text_input("Sua Gemini API Key (AI Studio - Grátis):", type="password")
+# ---------------------------------------------------------
+# AUTENTICAÇÃO / OBTENÇÃO DA API KEY
+# ---------------------------------------------------------
+api_key = None
+
+# 1. Tenta carregar a chave salva nos Secrets do Streamlit Cloud
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+elif "gemini_api_key" in st.secrets:
+    api_key = st.secrets["gemini_api_key"]
+
+# 2. Se não estiver configurada nos Secrets, exibe o campo na barra lateral (Fallback)
+if not api_key:
+    api_key = st.sidebar.text_input("Insira sua Gemini API Key:", type="password")
 
 if api_key:
     client = genai.Client(api_key=api_key)
+    st.sidebar.success("API Key carregada com sucesso!")
+else:
+    st.warning("⚠️ Insira sua API Key do Google AI Studio na barra lateral ou configure nos Secrets para começar.")
+    st.stop()
 
-    col1, col2 = st.columns(2)
+# ---------------------------------------------------------
+# FUNÇÃO AUXILIAR PARA GERAÇÃO DO PDF
+# ---------------------------------------------------------
+def gerar_pdf(texto_analise):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, "Laudo de Contestacao de Vistoria Imobiliaria", ln=True, align='C')
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", size=10)
+    # Tratamento simples para codificação de caracteres no FPDF (Latin-1)
+    linhas = texto_analise.encode('latin-1', 'replace').decode('latin-1').split('\n')
+    for linha in linhas:
+        pdf.multi_cell(0, 6, linha)
+        
+    return pdf.output(dest='S').encode('latin-1')
 
-    with col1:
-        laudo_texto = st.text_area("Texto do Laudo da Imobiliária:", height=200)
+# ---------------------------------------------------------
+# INTERFACE PRINCIPAL - ENTRADA DE DADOS
+# ---------------------------------------------------------
+st.header("1. Documentação e Evidências")
+col1, col2 = st.columns(2)
 
-    with col2:
-        video_file = st.file_uploader("Vídeo do Imóvel (Prefira vídeos curtos de até 1 ou 2 min)", type=["mp4", "mov", "avi"])
+with col1:
+    st.subheader("Laudo da Imobiliária")
+    laudo_texto = st.text_area(
+        "Cole aqui o texto relevante da vistoria feita pela imobiliária:",
+        height=250,
+        placeholder="Ex: Sala de estar: Paredes pintadas na cor branca, sem manchas, piso em bom estado de conservacao..."
+    )
 
-    if st.button("🔍 Analisar Vídeo Gratuitamente", type="primary"):
-        if not laudo_texto or not video_file:
-            st.error("Por favor, preencha o laudo e anexe o vídeo.")
-        else:
-            with st.spinner("Enviando e processando vídeo no Gemini (Plano Gratuito)..."):
-                # Salva o arquivo temporário
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
-                    tmp_file.write(video_file.read())
-                    tmp_file_path = tmp_file.name
+with col2:
+    st.subheader("Evidências do Inquilino")
+    fotos = st.file_uploader(
+        "Carregue fotos dos cômodos/avarias:",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True
+    )
+    foto_camera = st.camera_input("Ou tire uma foto agora:")
+    video_file = st.file_uploader(
+        "Ou envie um vídeo percorrendo o imóvel (MP4, MOV):",
+        type=["mp4", "mov", "avi"]
+    )
 
-                try:
-                    # Upload para a API temporária do Gemini
-                    uploaded_file = client.files.upload(file=tmp_file_path)
+# Consolidação das imagens capturadas/enviadas
+imagens_para_analise = []
+if fotos:
+    for f in fotos:
+        imagens_para_analise.append(Image.open(f))
+if foto_camera:
+    imagens_para_analise.append(Image.open(foto_camera))
 
-                    # Aguarda o processamento do vídeo
-                    while uploaded_file.state.name == "PROCESSING":
+# ---------------------------------------------------------
+# PROCESSAMENTO E ANÁLISE COM GEMINI
+# ---------------------------------------------------------
+if st.button("🔍 Analisar e Comparar Vistoria", type="primary"):
+    if not laudo_texto:
+        st.error("Por favor, forneça o texto da vistoria da imobiliária.")
+    elif not imagens_para_analise and not video_file:
+        st.error("Por favor, envie ao menos uma foto ou um vídeo como evidência.")
+    else:
+        with st.spinner("Analisando evidências e cruzando com o laudo da imobiliária..."):
+            prompt_base = f"""
+            Você é um perito especialista em vistorias imobiliárias e direito do inquilino.
+            Análise o laudo fornecido pela imobiliária e compare rigorosamente com as evidências (fotos/vídeos) enviadas pelo inquilino.
+
+            Texto do Laudo da Imobiliária:
+            {laudo_texto}
+
+            Instruções para a análise:
+            1. Avalie detalhadamente o estado das superfícies, pintura, manchas de umidade, arranhões, furos, trincas ou defeitos visíveis nas mídias fornecidas.
+            2. Verifique se o laudo da imobiliária descreve com precisão o estado real do imóvel ou se omitiu/descreveu incorretamente algum detalhe.
+            3. Identifique onde há discordâncias claras.
+            4. Elabore uma contestação formal, técnica e respeitosa para cada ponto divergente, citando o cômodo e o problema identificado para que o inquilino possa protocolar na imobiliária.
+
+            Estruture a resposta de forma clara, dividida por cômodos ou pontos contestados.
+            """
+
+            try:
+                # CASO 1: Análise por Vídeo
+                if video_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
+                        tmp_file.write(video_file.read())
+                        tmp_file_path = tmp_file.name
+
+                    # Upload para a File API do Gemini
+                    uploaded_video = client.files.upload(file=tmp_file_path)
+
+                    # Aguarda o processamento do vídeo no servidor do Google
+                    while uploaded_video.state.name == "PROCESSING":
                         time.sleep(3)
-                        uploaded_file = client.files.get(name=uploaded_file.name)
+                        uploaded_video = client.files.get(name=uploaded_video.name)
 
-                    if uploaded_file.state.name == "FAILED":
-                        raise Exception("Falha ao processar o vídeo no servidor do Google.")
+                    if uploaded_video.state.name == "FAILED":
+                        raise Exception("O processamento do vídeo falhou no servidor do Google.")
 
-                    prompt = f"""
-                    Você é um perito em vistorias imobiliárias e direito do inquilino.
-                    Compare o vídeo gravado com a descrição fornecida no laudo da imobiliária.
-
-                    Laudo da Imobiliária:
-                    {laudo_texto}
-
-                    Instruções:
-                    1. Identifique manchas de umidade, pintura avariada, furos, arranhões ou problemas estruturais no vídeo.
-                    2. Aponta onde o laudo da imobiliária foi omisso ou impreciso.
-                    3. Elabore os pontos de contestação formal e técnica para o inquilino.
-                    """
-
-                    # Força o uso do modelo gratuito de alta performance
+                    # Executa a análise do vídeo com o modelo Gemini 2.5 Flash
                     response = client.models.generate_content(
                         model='gemini-2.5-flash',
-                        contents=[uploaded_file, prompt]
+                        contents=[uploaded_video, prompt_base]
                     )
 
-                    st.success("Análise concluída com sucesso!")
-                    st.subheader("📌 Resultado da Avaliação")
-                    st.markdown(response.text)
-                    st.session_state['resultado_analise'] = response.text
+                    # Limpa o arquivo no servidor do Gemini
+                    client.files.delete(name=uploaded_video.name)
 
-                    # Limpa o arquivo da nuvem do Gemini para liberar espaço da cota
-                    client.files.delete(name=uploaded_file.name)
-
-                except APIError as e:
-                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                        st.error("⚠️ Limite da API Gratuita atingido para este minuto. Aguarde cerca de 1 minuto e tente novamente.")
-                    else:
-                        st.error(f"Erro na API do Gemini: {e}")
-                except Exception as e:
-                    st.error(f"Ocorreu um erro: {e}")
-                finally:
                     # Deleta o arquivo temporário local
                     if os.path.exists(tmp_file_path):
                         os.remove(tmp_file_path)
 
-    # Exportação em PDF
-    if 'resultado_analise' in st.session_state:
-        st.divider()
-        st.subheader("📄 Gerar Laudo de Contestação")
+                # CASO 2: Análise por Fotos/Imagens
+                else:
+                    conteudo = [prompt_base] + imagens_para_analise
+                    response = client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=conteudo
+                    )
 
-        def gerar_pdf(texto):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 14)
-            pdf.cell(0, 10, "Laudo de Contestacao de Vistoria", ln=True, align='C')
-            pdf.ln(5)
-            pdf.set_font("Arial", size=10)
-            
-            linhas = texto.encode('latin-1', 'replace').decode('latin-1').split('\n')
-            for linha in linhas:
-                pdf.multi_cell(0, 6, linha)
+                st.success("Análise concluída com sucesso!")
+                st.subheader("📌 Resultado da Avaliação e Contestação")
+                st.markdown(response.text)
                 
-            return pdf.output(dest='S').encode('latin-1')
+                # Salva o resultado no estado da sessão do Streamlit
+                st.session_state['resultado_analise'] = response.text
 
-        pdf_bytes = gerar_pdf(st.session_state['resultado_analise'])
-        
-        st.download_button(
-            label="Baixar PDF de Contestação",
-            data=pdf_bytes,
-            file_name="contestacao_vistoria.pdf",
-            mime="application/pdf"
-        )
-else:
-    st.warning("Insira sua API Key do Google AI Studio para começar.")
-      
+            except APIError as e:
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    st.error("⚠️ Limite da API Gratuita atingido neste minuto. Aguarde cerca de 1 minuto e tente novamente.")
+                else:
+                    st.error(f"Erro na API do Gemini: {e}")
+            except Exception as e:
+                st.error(f"Ocorreu um erro ao processar a solicitação: {e}")
+
+# ---------------------------------------------------------
+# GERADOR DE PDF DE CONTESTAÇÃO
+# ---------------------------------------------------------
+if 'resultado_analise' in st.session_state:
+    st.divider()
+    st.subheader("2. Gerar Documento de Contestação")
+
+    pdf_bytes = gerar_pdf(st.session_state['resultado_analise'])
+
+    st.download_button(
+        label="📄 Baixar Laudo de Contestação em PDF",
+        data=pdf_bytes,
+        file_name="contestacao_vistoria_imobiliaria.pdf",
+        mime="application/pdf"
+    )
