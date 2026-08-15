@@ -55,7 +55,7 @@ def extrair_itens_vistoria_ia(texto_entrada):
         "Analise o texto do laudo de vistoria e extraia os apontamentos divididos por cômodos/elementos. "
         "Ignore cláusulas padrão de contrato. Responda APENAS em formato JSON válido:\n"
         '{\n'
-        '  "imobiliaria": "nome da imobiliária ou vacio",\n'
+        '  "imobiliaria": "nome da imobiliária ou vazio",\n'
         '  "locatario": "nome do inquilino ou vazio",\n'
         '  "endereco": "endereço do imóvel ou vazio",\n'
         '  "checklist": [\n'
@@ -260,9 +260,9 @@ if not st.session_state.items_vistoria:
             with st.spinner("Extraindo e categorizando apontamentos do laudo..."):
                 texto = ""
                 try:
-                    with pypdf.PdfReader(pdf_file) as reader:
-                        for page in reader.pages:
-                            texto += page.extract_text() + "\n"
+                    reader = pypdf.PdfReader(pdf_file)
+                    for page in reader.pages:
+                        texto += page.extract_text() + "\n"
                 except Exception as e:
                     st.error(f"Erro ao ler PDF: {e}")
                 
@@ -397,7 +397,6 @@ else:
         else:
             with st.spinner("Compilando dados e gerando documento em PDF via ReportLab..."):
                 try:
-                    # Opcional: Redação sintética de apoio via Llama 3.3
                     parecer_ia = ""
                     if client and st.session_state.texto_vistoria_bruto:
                         prompt_parecer = (
@@ -412,7 +411,6 @@ else:
                         )
                         parecer_ia = res_ia.choices[0].message.content
 
-                    # Geração do PDF
                     pdf_bytes = gerar_pdf_contestacao(
                         cabecalho=st.session_state.cabecalho_vistoria,
                         itens_lista=st.session_state.items_vistoria,
@@ -431,4 +429,5 @@ else:
                         use_container_width=True
                     )
                 except Exception as e:
-                    st.error(f"Erro ao gerar o PDF:
+                    st.error(f"Erro ao gerar o PDF: {e}")
+                    
