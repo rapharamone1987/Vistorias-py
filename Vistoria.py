@@ -98,7 +98,6 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
             )
             data = limpar_json_ia(res.choices[0].message.content)
             if data and "checklist" in data:
-                # Filtra qualquer resíduo de item genérico
                 data["checklist"] = [
                     item for item in data["checklist"] 
                     if not re.search(r'(não há informação|sem informação|não informado|boas condições gerais)', item, re.IGNORECASE)
@@ -435,4 +434,4 @@ else:
         c1, c2, c3 = st.columns(3)
         st.session_state.cabecalho_vistoria["locatario"] = c1.text_input("Locatário (Inquilino):", value=st.session_state.cabecalho_vistoria["locatario"])
         st.session_state.cabecalho_vistoria["imobiliaria"] = c2.text_input("Imobiliária / Vistoriador:", value=st.session_state.cabecalho_vistoria["imobiliaria"])
-        st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. C                 
+        st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vist        
