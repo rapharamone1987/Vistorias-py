@@ -90,7 +90,7 @@ def gerar_pdf(texto_analise):
         else:
             pdf.ln(3)
         
-    return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output())
 
 # ---------------------------------------------------------
 # INTERFACE PRINCIPAL - ENTRADA DE DADOS
