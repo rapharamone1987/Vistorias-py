@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 st.title("🏠 Auxiliar de Contestação de Vistoria Imobiliária")
-st.write("Compare o laudo oficial com fotos do imóvel para gerar uma contestação fundamentada via **Groq (Llama 3.2 Vision)**.")
+st.write("Compare o laudo oficial com fotos do imóvel para gerar uma contestação fundamentada via **Groq**.")
 
 # ---------------------------------------------------------
 # AUTENTICAÇÃO / OBTENÇÃO DA GROQ API KEY
@@ -154,9 +154,8 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
     elif not imagens_totais:
         st.error("Por favor, envie ou tire ao menos uma foto como evidência.")
     else:
-        with st.spinner("Analisando imagens e comparando com o laudo via Groq (Llama 3.2 90B Vision)..."):
+        with st.spinner("Analisando imagens e comparando com o laudo via Groq..."):
             try:
-                # Prompt de instrução técnica
                 prompt_text = f"""
                 Você é um perito especialista em vistorias imobiliárias e direito do inquilino.
                 Análise o laudo fornecido pela imobiliária e compare rigorosamente com as evidências (fotos) enviadas pelo inquilino.
@@ -173,7 +172,6 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                 Estruture a resposta de forma clara, dividida por cômodos ou pontos contestados.
                 """
 
-                # Monta a estrutura da mensagem com texto e imagens em Base64
                 content_payload = [
                     {
                         "type": "text",
@@ -181,7 +179,6 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                     }
                 ]
 
-                # Adiciona as imagens preparadas para o Llama 3.2 Vision
                 for img in imagens_totais:
                     base64_str = encode_image_to_base64(img)
                     content_payload.append({
@@ -191,10 +188,8 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                         }
                     })
 
-                # Chamada para o modelo visual avançado de 90B da Groq
                 completion = client.chat.completions.create(
                     model="qwen/qwen3.6-27b",
-",
                     messages=[
                         {
                             "role": "user",
@@ -231,3 +226,4 @@ if 'resultado_analise' in st.session_state:
         file_name="contestacao_vistoria_imobiliaria.pdf",
         mime="application/pdf"
     )
+    
