@@ -71,15 +71,24 @@ def encode_image_to_base64(pil_image, max_size=(600, 600), quality=60):
 
 def gerar_pdf(texto_analise):
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    
+    # Título principal
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "Laudo de Contestacao de Vistoria Imobiliaria", ln=True, align='C')
+    pdf.cell(190, 10, "Laudo de Contestacao de Vistoria Imobiliaria", ln=True, align='C')
     pdf.ln(5)
     
+    # Corpo do texto
     pdf.set_font("Arial", size=10)
-    linhas = texto_analise.encode('latin-1', 'replace').decode('latin-1').split('\n')
-    for linha in linhas:
-        pdf.multi_cell(0, 6, linha)
+    texto_limpo = texto_analise.encode('latin-1', 'replace').decode('latin-1')
+    
+    for linha in texto_limpo.split('\n'):
+        linha_formatada = linha.strip()
+        if linha_formatada:
+            pdf.multi_cell(190, 6, linha_formatada)
+        else:
+            pdf.ln(3)
         
     return pdf.output(dest='S').encode('latin-1')
 
@@ -153,7 +162,7 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
     else:
         with st.spinner("Analisando fotos com modelo de visão e gerando laudo com Llama 3.3 70B..."):
             try:
-                # ETAPA 1: Processamento de Visão Computacional com Contingência
+                # ETAPA 1: Processamento de Visão Computacional
                 content_payload = [
                     {
                         "type": "text",
@@ -171,7 +180,6 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
                     })
 
                 try:
-                    # Tentativa 1 com Qwen 27B
                     vision_resp = client.chat.completions.create(
                         model="qwen/qwen3.6-27b",
                         messages=[{"role": "user", "content": content_payload}],
@@ -179,7 +187,6 @@ if st.button("🔍 Analisar e Comparar Vistoria", type="primary", use_container_
                         max_tokens=500
                     )
                 except Exception:
-                    # Fallback para Llama 3.2 11B Vision
                     vision_resp = client.chat.completions.create(
                         model="llama-3.2-11b-vision-instruct",
                         messages=[{"role": "user", "content": content_payload}],
