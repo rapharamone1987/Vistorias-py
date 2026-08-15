@@ -32,6 +32,7 @@ if "cabecalho_vistoria" not in st.session_state:
         "data_vistoria": datetime.now().strftime("%d/%m/%Y")
     }
 if "registros_fotos" not in st.session_state: st.session_state.registros_fotos = {}
+if "analises_fotos_editaveis" not in st.session_state: st.session_state.analises_fotos_editaveis = {}
 if "divergentes_status" not in st.session_state: st.session_state.divergentes_status = {}
 if "camera_ativa" not in st.session_state: st.session_state.camera_ativa = None
 if "texto_vistoria_bruto" not in st.session_state: st.session_state.texto_vistoria_bruto = ""
@@ -39,7 +40,7 @@ if "parecer_editavel" not in st.session_state: st.session_state.parecer_editavel
 
 # CONFIGURAÇÃO DA GROQ API KEY
 key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
-client = Groq(api_key=key) if key else None
+client = Groq(api_key=key, timeout=15.0) if key else None
 
 # ==========================================
 # 2. FUNÇÕES AUXILIARES DE IA E LEGISLAÇÃO
@@ -51,6 +52,18 @@ def limpar_json_ia(texto):
     except:
         return None
 
+def otimizar_bytes_imagem(raw_bytes, max_dim=500):
+    try:
+        img = Image.open(io.BytesIO(raw_bytes))
+        img.thumbnail((max_dim, max_dim))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=65)
+        return buf.getvalue()
+    except Exception:
+        return raw_bytes
+
 def encode_image_to_base64(raw_bytes):
     return base64.b64encode(raw_bytes).decode('utf-8')
 
@@ -60,7 +73,7 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
         f"Analise o laudo referente a uma VISTORIA DE {tipo_vistoria.upper()}.\n"
         "Extraia uma lista de verificação DETALHADA por elemento de cada cômodo.\n"
         "Especifique detalhes sobre: Pintura, Pisos/Rodapés, Portas/Aberturas, Instalações Elétricas/Hidráulicas e Louças/Metais.\n"
-        "Ignore cláusulas jurídicas padrão. Responda APENAS em JSON válido:\n"
+        "Ignore cláusulas jurídicas padrão. Responda APENAS em JSON válido no seguinte formato exato:\n"
         '{\n'
         '  "imobiliaria": "nome da imobiliária",\n'
         '  "locatario": "nome do inquilino",\n'
@@ -73,17 +86,19 @@ def extrair_itens_vistoria_ia(texto_entrada, tipo_vistoria):
         '}'
     )
     if client:
-        res = client.chat.completions.create(
-            model="llama-3.3-70b-versatile", 
-            messages=[{"role": "user", "content": prompt + "\n\nTexto do Laudo:\n" + texto_entrada[:5000]}], 
-            temperature=0.1,
-            max_tokens=2048
-        )
-        return limpar_json_ia(res.choices[0].message.content)
+        try:
+            res = client.chat.completions.create(
+                model="llama-3.3-70b-versatile", 
+                messages=[{"role": "user", "content": prompt + "\n\nTexto do Laudo:\n" + texto_entrada[:4000]}], 
+                temperature=0.1,
+                max_tokens=1500
+            )
+            return limpar_json_ia(res.choices[0].message.content)
+        except Exception as e:
+            st.warning(f"Aviso na extração por IA: {e}")
     return None
 
 def gerar_parecer_revisao_ia(texto_bruto, tipo_vistoria):
-    """Gera parecer com fundamentação jurídica na Lei do Inquilino (Lei 8.245/91)."""
     if not client or not texto_bruto:
         return ""
     
@@ -94,52 +109,66 @@ def gerar_parecer_revisao_ia(texto_bruto, tipo_vistoria):
     )
     
     prompt = (
-        f"Elabore um termo/parecer técnico de REVISÃO DE VISTORIA DE {tipo_vistoria.upper()} com fundamentação na Lei do Inquilino (Lei nº 8.245/1991).\n"
-        f"Objetivo principal: {contexto_foco}\n"
-        "Cite expressamente os artigos cabíveis quando for o caso (Art. 22 e Art. 23) de forma respeitosa, formal e juridicamente precisa.\n"
-        "REGRA: Máximo 14 linhas e encerre OBRIGATORIAMENTE com frase completa."
+        f"Você é um Perito Locatício. Elabore um parecer técnico formal em PORTUGUÊS DO BRASIL de REVISÃO DE VISTORIA DE {tipo_vistoria.upper()} (Lei 8.245/1991).\n"
+        f"Objetivo: {contexto_foco}\n"
+        "REGRAS INVIOLÁVEIS:\n"
+        "1. Responda EXCLUSIVAMENTE em Português do Brasil.\n"
+        "2. NÃO inclua rascunhos, instruções em inglês ou introduções meta-analíticas.\n"
+        "3. Máximo 10 linhas, finalizando a última frase de forma completa."
     )
-    res = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt + "\n\nLaudo da Imobiliária:\n" + texto_bruto[:3000]}],
-        temperature=0.2,
-        max_tokens=900
-    )
-    return res.choices[0].message.content
+    try:
+        res = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt + "\n\nLaudo da Imobiliária:\n" + texto_bruto[:2500]}],
+            temperature=0.1,
+            max_tokens=500
+        )
+        return res.choices[0].message.content
+    except Exception:
+        return "Solicitamos a revisão formal dos itens apontados neste laudo nos termos dos Artigos 22 e 23 da Lei nº 8.245/1991, resguardando os direitos do locatário quanto ao estado inicial e ao desgaste decorrente do uso regular do imóvel."
 
 def analisar_foto_item_ia(raw_bytes, descricao_item):
+    """Analisa a foto garantindo resposta direta em Português do Brasil sem rascunho em inglês."""
     if not client:
-        return ""
-    base64_str = encode_image_to_base64(raw_bytes)
+        return "Evidência fotográfica registrada para comprovação visual."
+    
+    bytes_otimizados = otimizar_bytes_imagem(raw_bytes, max_dim=500)
+    base64_str = encode_image_to_base64(bytes_otimizados)
+    
+    prompt_visao = (
+        f"Você é um perito em vistorias imobiliárias no Brasil. Analise esta foto referente ao item '{descricao_item}'.\n"
+        "REGRAS OBRIGATÓRIAS:\n"
+        "1. Responda EXCLUSIVAMENTE em Português do Brasil.\n"
+        "2. NUNCA escreva rascunhos, pensamentos ou texto em inglês (como 'The user wants me to analyze...').\n"
+        "3. Descreva em até 2 frases objetivas as marcas, manchas, trincas, furos ou desgastes visíveis na imagem."
+    )
+    
     content_payload = [
-        {
-            "type": "text",
-            "text": f"Analise esta imagem associada ao item '{descricao_item}'. Descreva tecnicamente em 2 frases se a avaria se trata de vício do imóvel, desgaste natural ou dano localizado."
-        },
-        {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"}
-        }
+        {"type": "text", "text": prompt_visao},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"}}
     ]
     try:
         res = client.chat.completions.create(
             model="qwen/qwen3.6-27b",
             messages=[{"role": "user", "content": content_payload}],
             temperature=0.1,
-            max_tokens=250
+            max_tokens=200
         )
-        return res.choices[0].message.content
+        txt = res.choices[0].message.content
+        # Remove eventuais pensamentos em inglês mantidos pela IA
+        txt = re.sub(r'(?i)(The user|Analyze the image|In this photo).*?\n\n', '', txt, flags=re.DOTALL)
+        return txt.strip()
     except Exception:
         try:
             res = client.chat.completions.create(
                 model="llama-3.2-11b-vision-instruct",
                 messages=[{"role": "user", "content": content_payload}],
                 temperature=0.1,
-                max_tokens=250
+                max_tokens=200
             )
-            return res.choices[0].message.content
+            return res.choices[0].message.content.strip()
         except Exception:
-            return ""
+            return "Evidência fotográfica registrada para comprovação das condições físicas do elemento."
 
 def purificar_texto_para_pdf(texto_bruto):
     if not texto_bruto: return ""
@@ -176,8 +205,6 @@ def gerar_pdf_revisao(cabecalho, itens_lista, status_divergentes, fotos_dict, an
     CINZA_TEXTO = colors.HexColor("#0f172a")
     CINZA_LINHA = colors.HexColor("#cbd5e1")
     
-    tipo_v = cabecalho.get("tipo_vistoria", "Entrada").upper()
-    
     style_titulo = ParagraphStyle(
         'DocTitle', parent=styles['Heading1'],
         fontSize=12, leading=15, textColor=colors.HexColor("#ffffff"),
@@ -209,7 +236,7 @@ def gerar_pdf_revisao(cabecalho, itens_lista, status_divergentes, fotos_dict, an
     story = []
 
     # Banner
-    titulo_banner = f"<b>LAUDO TÉCNICO DE REVISÃO DE VISTORIA — LEI 8.245/1991</b>"
+    titulo_banner = "<b>LAUDO TÉCNICO DE REVISÃO DE VISTORIA — LEI 8.245/1991</b>"
     t_banner = Table([[Paragraph(titulo_banner, style_titulo)]], colWidths=[540])
     t_banner.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), AZUL_HEADER),
@@ -238,7 +265,7 @@ def gerar_pdf_revisao(cabecalho, itens_lista, status_divergentes, fotos_dict, an
     story.append(t_id)
     story.append(Spacer(1, 10))
 
-    # Parecer Consolidado Fundamentado
+    # Parecer Consolidado
     if parecer_texto:
         story.append(Paragraph("<b>1. PARECER TÉCNICO DE FUNDAMENTAÇÃO LEGAL (LEI Nº 8.245/1991)</b>", style_secao))
         story.append(HRFlowable(width="100%", thickness=1, color=AZUL_HEADER, spaceAfter=6))
@@ -283,12 +310,11 @@ def gerar_pdf_revisao(cabecalho, itens_lista, status_divergentes, fotos_dict, an
             img_io = io.BytesIO(img_bytes)
             rl_img = RLImage(img_io, width=220, height=140)
             
-            analise_txt = analises_fotos_dict.get(uid, "")
-            cap_text = f"<b>Evidência Fotográfica do Item {i+1}</b>"
-            if analise_txt:
-                cap_text += f"<br/><br/><b>Análise da Imagem:</b> {analise_txt}"
+            # Pega o texto pericial REVISADO/EDITADO pelo usuário no painel
+            analise_txt = analises_fotos_dict.get(uid, "Evidência fotográfica anexada.")
+            cap_text = f"<b>Evidência Fotográfica do Item {i+1}</b><br/><br/><b>Análise da Imagem:</b> {analise_txt}"
             
-            legenda = Paragraph(cap_text, style_analise_ia if analise_txt else style_legenda)
+            legenda = Paragraph(cap_text, style_analise_ia)
             
             t_foto = Table([[rl_img, legenda]], colWidths=[240, 300])
             t_foto.setStyle(TableStyle([
@@ -405,108 +431,4 @@ else:
         st.session_state.cabecalho_vistoria["contrato"] = c3.text_input("Cód. Contrato / Vistoria:", value=st.session_state.cabecalho_vistoria["contrato"])
         st.session_state.cabecalho_vistoria["endereco"] = st.text_input("Endereço do Imóvel:", value=st.session_state.cabecalho_vistoria["endereco"])
 
-    st.subheader("✍️ 1. Parecer Técnico de Revisão Locatícia (Lei 8.245/1991)")
-    st.caption("Ajuste a fundamentação legal que constará na introdução do laudo emitido.")
-    st.session_state.parecer_editavel = st.text_area(
-        "Texto do Parecer (Editável):",
-        value=st.session_state.parecer_editavel,
-        height=140
-    )
-
-    st.subheader(f"✅ 2. Conferência dos Itens ({st.session_state.cabecalho_vistoria['tipo_vistoria']})")
-    st.caption("Marque **'REVISAR'** somente nos itens com divergências, vícios ocultos ou desgastes incorretamente atribuídos ao inquilino.")
-
-    for i, itm in enumerate(st.session_state.items_vistoria):
-        uid = itm["id"]
-        with st.container(border=True):
-            col_ch, col_tx, col_ex = st.columns([0.25, 0.65, 0.1])
-            
-            st.session_state.divergentes_status[uid] = col_ch.checkbox(
-                "⚠️ REVISAR", 
-                key=f"ch_{uid}", 
-                value=st.session_state.divergentes_status.get(uid, False)
-            )
-            
-            itm["texto"] = col_tx.text_input(f"Item {i+1}", itm["texto"], key=f"in_{uid}", label_visibility="collapsed")
-            
-            if col_ex.button("🗑️", key=f"del_{uid}"): 
-                st.session_state.items_vistoria.pop(i)
-                st.rerun()
-            
-            if uid not in st.session_state.registros_fotos:
-                t1, t2 = st.tabs(["📸 Câmera", "📁 Galeria de Fotos"])
-                with t1:
-                    if st.session_state.camera_ativa == uid:
-                        f = st.camera_input("Tire a foto da avaria/estado:", key=f"cam_{uid}")
-                        if f:
-                            img = Image.open(f)
-                            buf = io.BytesIO()
-                            img.save(buf, format="JPEG", quality=70)
-                            st.session_state.registros_fotos[uid] = buf.getvalue()
-                            st.session_state.camera_ativa = None
-                            st.rerun()
-                    elif st.button("Abrir Câmera", key=f"btn_c_{uid}"):
-                        st.session_state.camera_ativa = uid
-                        st.rerun()
-                with t2:
-                    up = st.file_uploader("Upload da foto do item:", type=["jpg", "jpeg", "png"], key=f"up_{uid}")
-                    if up:
-                        img = Image.open(up)
-                        buf = io.BytesIO()
-                        img.save(buf, format="JPEG", quality=70)
-                        st.session_state.registros_fotos[uid] = buf.getvalue()
-                        st.rerun()
-            else:
-                st.image(st.session_state.registros_fotos[uid], width=200, caption=f"Foto Anexada ao Item {i+1}")
-                if st.button("Remover Foto", key=f"rm_{uid}"):
-                    del st.session_state.registros_fotos[uid]
-                    st.rerun()
-
-    if st.button("➕ Adicionar Item para Conferência"):
-        st.session_state.items_vistoria.append({"id": time.time(), "texto": "Cômodo - Elemento: Descrição do estado real"})
-        st.rerun()
-
-    st.markdown("---")
-    
-    obs_geral = st.text_area(
-        "Considerações Finais / Ressalvas Gerais do Inquilino:",
-        placeholder="Ex: Ressalvo que a umidade nas paredes do quarto decorre de vazamento na fachada externa, de responsabilidade do locador..."
-    )
-
-    if st.button("🚀 GERAR LAUDO DE REVISÃO TÉCNICA EM PDF", type="primary", use_container_width=True):
-        if not st.session_state.cabecalho_vistoria["locatario"]:
-            st.error("Por favor, preencha o nome do Locatário (Inquilino) nos dados do imóvel.")
-        else:
-            with st.spinner("Analisando imagens e compilando relatório de revisão legal..."):
-                try:
-                    analises_fotos_dict = {}
-                    for itm in st.session_state.items_vistoria:
-                        uid = itm['id']
-                        if uid in st.session_state.registros_fotos:
-                            analise_img = analisar_foto_item_ia(
-                                st.session_state.registros_fotos[uid], 
-                                itm['texto']
-                            )
-                            if analise_img:
-                                analises_fotos_dict[uid] = analise_img
-
-                    pdf_bytes = gerar_pdf_revisao(
-                        cabecalho=st.session_state.cabecalho_vistoria,
-                        itens_lista=st.session_state.items_vistoria,
-                        status_divergentes=st.session_state.divergentes_status,
-                        fotos_dict=st.session_state.registros_fotos,
-                        analises_fotos_dict=analises_fotos_dict,
-                        obs_geral=obs_geral,
-                        parecer_texto=st.session_state.parecer_editavel
-                    )
-
-                    st.success("Laudo de Revisão gerado com sucesso!")
-                    st.download_button(
-                        label="📄 Baixar Laudo de Revisão Técnica (PDF Oficial)",
-                        data=pdf_bytes,
-                        file_name=f"Revisao_Vistoria_{st.session_state.cabecalho_vistoria['tipo_vistoria']}_{datetime.now().strftime('%d%m%Y')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Erro ao gerar o PDF: {e}")
+    st.subheader("✍️ 1. Parecer Técnico de Revisão Locatícia (Lei 8.245/1991
