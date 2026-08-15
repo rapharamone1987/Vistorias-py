@@ -193,7 +193,7 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
 
                 # Chamada para o modelo visual avançado de 90B da Groq
                 completion = client.chat.completions.create(
-                    model="llama-3.2-90b-vision-preview",
+                    model="llama-3.2-11b-vision-instruct",
                     messages=[
                         {
                             "role": "user",
