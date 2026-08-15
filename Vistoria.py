@@ -59,11 +59,21 @@ def extrair_texto_arquivo(arquivo):
         return arquivo.read().decode('utf-8', errors='ignore')
     return ""
 
-def encode_image_to_base64(pil_image):
+def encode_image_to_base64(pil_image, max_size=(800, 800), quality=75):
+    """
+    Redimensiona e comprime a imagem para reduzir drasticamente
+    o consumo de tokens no payload em Base64 para a API do Groq.
+    """
     buffered = io.BytesIO()
+    
     if pil_image.mode != "RGB":
         pil_image = pil_image.convert("RGB")
-    pil_image.save(buffered, format="JPEG")
+        
+    # Redimensiona mantendo proporção
+    pil_image.thumbnail(max_size, Image.Resampling.LANCZOS)
+    
+    # Salva comprimido em JPEG
+    pil_image.save(buffered, format="JPEG", quality=quality)
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 def gerar_pdf(texto_analise):
@@ -154,7 +164,7 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
     elif not imagens_totais:
         st.error("Por favor, envie ou tire ao menos uma foto como evidência.")
     else:
-        with st.spinner("Analisando imagens e comparando com o laudo via Groq..."):
+        with st.spinner("Otimizando imagens e analisando divergências via Groq..."):
             try:
                 prompt_text = f"""
                 Você é um perito especialista em vistorias imobiliárias e direito do inquilino.
@@ -179,7 +189,8 @@ if st.button("🔍 Analisar e Comparar Vistoria (Groq)", type="primary", use_con
                     }
                 ]
 
-                for img in imagens_totais:
+                # Seleciona até 4 fotos principais e comprime para não estourar a cota de tokens (TPM)
+                for img in imagens_totais[:4]:
                     base64_str = encode_image_to_base64(img)
                     content_payload.append({
                         "type": "image_url",
